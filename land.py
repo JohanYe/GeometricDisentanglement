@@ -22,12 +22,13 @@ def LAND(loc, scale, endpoints, model=None, logspace=True, init_curve=None):
         return pz, init_curve, success
 
 
-def LAND_fullcov(loc, A, z_points, dv, grid_points, model=None, logspace=True, init_curve=None):
+def LAND_fullcov(loc, A, z_points, dv, grid_points, constant=None, model=None, logspace=True,
+                 init_curve=None):
     """
     full covariance matrix
     """
-
-    constant = estimate_constant_full(mu=loc, A=A, grid=grid_points, dv=dv, model=model, batch_size=1024)
+    if constant == None:
+        constant = estimate_constant_full(mu=loc, A=A, grid=grid_points, dv=dv, model=model, batch_size=1024)
     loc = loc.repeat([z_points.shape[0], 1])
     if init_curve is not None:
         D2, init_curve, _ = model.dist2_explicit(loc, z_points, C=init_curve, A=A)

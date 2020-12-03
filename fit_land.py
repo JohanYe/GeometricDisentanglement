@@ -64,18 +64,20 @@ Mx, My = torch.meshgrid(ran0, ran1)
 Mxy = torch.cat((Mx.t().reshape(-1, 1), My.t().reshape(-1, 1)), dim=1)  # (meshsize^2)x2
 Mxy.requires_grad = False
 dv = (ran0[-1] - ran0[0]) * (ran1[-1] - ran1[0]) / (meshsize ** 2)
-batch_size = 1024
+batch_size = 512
 iters = (Mxy.shape[0] // batch_size) + 1
 curves = {}
 
 optimizer = torch.optim.Adam([mu], lr=1e-2, weight_decay=1e-2)
 Cs, mus, lpzs, constants, distances = [], [], [], [], []
 lpzs_log, mu_log, constant_log, distance_log = {}, {}, {}, {}
-n_epochs = 1
+n_epochs = 5
 
 net.eval()
 for epoch in range(1, n_epochs + 1):
     for idx, batch in enumerate(tqdm(train_loader)):
+
+        constant = None if idx % 5 == 0 else constant
         # data
         lpz, init_curve, dist2, constant = land.LAND_fullcov(loc=mu,
                                                              A=std,
@@ -87,15 +89,48 @@ for epoch in range(1, n_epochs + 1):
         optimizer.step()
 
         mus.append(mu.cpu().detach())
-        lpzs.append(lpz)
-        constants.append(constant.unsqueeze(0))
-        distances.append(dist2.sqrt().unsqueeze(0))
+        lpzs.append(lpz.cpu())
+        constants.append(constant.unsqueeze(0).cpu().detach())
+        distances.append(dist2.sqrt().sum().unsqueeze(0).cpu().detach())
 
     lpzs_log[epoch] = torch.cat(lpzs).mean().item()
-    mu_log[epoch] = torch.cat(mus).mean().item()
+    mu_log[epoch] = torch.cat(mus).mean(0)
+    constant_log[epoch] = torch.cat(constants, dim=0).mean()
+    distance_log[epoch] = torch.cat(distances, dim=0).mean()
 
     print('Epoch: {}, P(z): {:.4f}, mu: [{:.4f},{:.4f}], std: {}'.format(epoch,
                                                                          torch.cat(lpzs).mean().item(),
                                                                          torch.cat(mus).mean(dim=0)[0].item(),
                                                                          torch.cat(mus).mean(dim=0)[0].item(),
                                                                          np.round(std.data.tolist(), 4)))
+
+fig, ax = plt.subplots(1, 2, figsize=(7, 7))
+x_plt = list(lpzs_log.keys())
+y_plt = list(lpzs_log.values())
+ax[0].set_title('Loss Curve')
+ax[0].set_ylabel('$-log(p(z|\mu, p))$')
+ax[0].set_xlabel('Epoch')
+ax[0].plot(x_plt, y_plt)
+
+distances_plot = list(constant_log.values())
+constants_plot = list(distance_log.values())
+ax[1].set_title('Distance vs Constant plot')
+ax[1].plot(x_plt, distances_plot)
+ax2 = ax[1].twinx()
+ax2.plot(x_plt, constants_plot)
+
+fig.tight_layout()
+plt.show()
+
+fig, ax = plt.subplots(1, 2, figsize=(15, 5))
+mu1 = np.stack(list(mu_log.values()))[0]
+mu2 = np.stack(list(mu_log.values()))[1]
+ax[0].set_title('$\mu_1$-Change')
+ax[0].set_ylabel('$\mu_1$ values')
+ax[0].set_xlabel('Epoch')
+ax[0].plot(x_plt, mu1, label="$\mu_1$")
+
+ax[1].set_title('$\mu_2$-Change')
+ax[1].set_ylabel('$\mu_2$ values')
+ax[1].set_xlabel('Epoch')
+ax[1].plot(x_plt, mu2, label="$\mu_2$")
