@@ -1,7 +1,8 @@
 import torch
 import torchvision.datasets
 import model
-from utils import load_checkpoint, custom_dataset
+from utils import load_checkpoint, custom_dataset, print_stdout
+import visualize
 import numpy as np
 import matplotlib.pyplot as plt
 import os
@@ -16,7 +17,11 @@ model_folder = "./model/best_beta1/"
 model_name = 'best_beta1'
 load_land = False
 simple = False
-hpc = True
+hpc = False
+simple_land = False
+fast_train = False
+debug_mode = True
+full_cov = True
 start_time = time.time()
 
 batch_size = 1024 if hpc else 512
@@ -58,7 +63,10 @@ if load_land:
 else:  # manual init
     mu_np = np.expand_dims(np.array([0, 0]), axis=0)
     mu = torch.tensor(mu_np).to(device).float().requires_grad_(True)
-    std = torch.tensor([[1 / 30, 1 / 60], [1 / 61, 1 / 31]]).to(device).float().requires_grad_(True)
+    if full_cov:
+        std = torch.tensor([[1 / 30, 1 / 60], [1 / 61, 1 / 31]]).to(device).float().requires_grad_(True)
+    else:
+        std = torch.tensor([40.]).to(device).float().requires_grad_(True)
 
 # meshgrid creating
 meshsize = 60
@@ -74,19 +82,24 @@ curves = {}
 optimizer = torch.optim.Adam([mu], lr=1e-3, weight_decay=1e-3)
 Cs, mus, lpzs, constants, distances = [], [], [], [], []
 lpzs_log, mu_log, constant_log, distance_log = {}, {}, {}, {}
-n_epochs = 100
+n_epochs = 2 if debug_mode else 100
 
 net.eval()
 for epoch in range(1, n_epochs + 1):
     for idx, batch in enumerate(tqdm(train_loader)):
+        if fast_train:
+            constant = None if idx % 5 == 0 else constant
+        else:
+            constant = None
         # data
-        lpz, init_curve, dist2, constant = land.LAND_fullcov(loc=mu,
-                                                             A=std,
-                                                             z_points=batch[0].to(device),
-                                                             dv=dv,
-                                                             grid_points=Mxy,
-                                                             model=net,
-                                                             batch_size=batch_size)
+        lpz, init_curve, dist2, constant = land.land_auto(loc=mu,
+                                                          scale=std,
+                                                          z_points=batch[0].to(device),
+                                                          dv=dv,
+                                                          grid=Mxy,
+                                                          model=net,
+                                                          constant=constant,
+                                                          batch_size=batch_size)
         lpz.mean().backward()
         optimizer.step()
 
@@ -95,70 +108,50 @@ for epoch in range(1, n_epochs + 1):
         constants.append(constant.unsqueeze(0).cpu().detach())
         distances.append(dist2.sqrt().sum().unsqueeze(0).cpu().detach())
 
-        # if idx == 2:
-        #     break
+        if debug_mode and idx == 2:
+            break
 
     lpzs_log[epoch] = torch.cat(lpzs).mean().item()
     mu_log[epoch] = torch.cat(mus).mean(0)
     constant_log[epoch] = torch.cat(constants, dim=0).mean()
     distance_log[epoch] = torch.cat(distances, dim=0).mean()
 
-    print('Epoch: {}, P(z): {:.4f}, mu: [{:.4f},{:.4f}], std: {}'.format(epoch,
-                                                                         torch.cat(lpzs).mean().item(),
-                                                                         torch.cat(mus).mean(dim=0)[0].item(),
-                                                                         torch.cat(mus).mean(dim=0)[1].item(),
-                                                                         np.round(std.data.tolist(), 4)))
+    print_stdout('Epoch: {}, P(z): {:.4f}, mu: [{:.4f},{:.4f}], std: {}'.format(epoch,
+                                                                                torch.cat(lpzs).mean().item(),
+                                                                                torch.cat(mus).mean(dim=0)[0].item(),
+                                                                                torch.cat(mus).mean(dim=0)[1].item(),
+                                                                                np.round(std.data.tolist(), 4)))
 
-fig, ax = plt.subplots(1, 2, figsize=(10, 5))
+visualize.plot_training_curves(nll_log=lpzs_log,
+                               constant_log=constant_log,
+                               distance_log=distance_log,
+                               output_filename=model_folder + model_name + 'land_mu_training_curve.pdf')
 
-x_plt = list(lpzs_log.keys())
-y_plt = list(lpzs_log.values())
-ax[0].set_title('Loss Curve')
-ax[0].set_ylabel('$-log(p(z|\mu, p))$')
-ax[0].set_xlabel('Epoch')
-ax[0].plot(x_plt, y_plt)
+visualize.plot_mu_curve(mu_log, output_filename=model_folder + model_name + 'land_mu_plot.pdf')
 
-distances_plot = list(constant_log.values())
-constants_plot = list(distance_log.values())
-ax[1].set_title('Distance vs Constant plot')
-ax[1].plot(x_plt, distances_plot)
-ax2 = ax[1].twinx()
-ax2.plot(x_plt, constants_plot)
-
-fig.tight_layout()
-plt.savefig(model_folder + model_name + 'land_mu_training_curve.pdf')
-plt.show()
-
-fig, ax = plt.subplots(1, 2, figsize=(10, 5))
-mu1 = np.stack(list(mu_log.values()))[:, 0]
-mu2 = np.stack(list(mu_log.values()))[:, 1]
-ax[0].set_title('$\mu_1$-Change')
-ax[0].set_ylabel('$\mu_1$ values')
-ax[0].set_xlabel('Epoch')
-ax[0].plot(x_plt, mu1, label="$\mu_1$")
-
-ax[1].set_title('$\mu_2$-Change')
-ax[1].set_ylabel('$\mu_2$ values')
-ax[1].set_xlabel('Epoch')
-ax[1].plot(x_plt, mu2, label="$\mu_2$")
-plt.savefig(model_folder + model_name + 'land_mu_tracking.pdf')
-
-optimizer = torch.optim.Adam([std], lr=1e-3, weight_decay=1e-3)
+optimizer = torch.optim.Adam([std], lr=3e-4)
 Cs, stds, lpzs, constants, distances = [], [], [], [], []
 lpzs_log_std, std_log, constant_log_std, distance_log_std = {}, {}, {}, {}
-n_epochs = 100
+n_epochs = 2 if debug_mode else 100
 
 net.eval()
 for epoch in range(1, n_epochs + 1):
     for idx, batch in enumerate(tqdm(train_loader)):
+
+        if fast_train:
+            constant = None if idx % 5 == 0 else constant
+        else:
+            constant = None
+
         # data
-        lpz, init_curve, dist2, constant = land.LAND_fullcov(loc=mu,
-                                                             A=std,
-                                                             z_points=batch[0].to(device),
-                                                             dv=dv,
-                                                             grid_points=Mxy,
-                                                             model=net,
-                                                             batch_size=batch_size)
+        lpz, init_curve, dist2, constant = land.land_auto(loc=mu,
+                                                          scale=std,
+                                                          z_points=batch[0].to(device),
+                                                          dv=dv,
+                                                          constant=constant,
+                                                          grid=Mxy,
+                                                          model=net,
+                                                          batch_size=batch_size)
         lpz.mean().backward()
         optimizer.step()
 
@@ -167,8 +160,8 @@ for epoch in range(1, n_epochs + 1):
         constants.append(constant.unsqueeze(0).cpu().detach())
         distances.append(dist2.sqrt().sum().unsqueeze(0).cpu().detach())
 
-        # if idx == 2:
-        #     break
+        if debug_mode and idx == 2:
+            break
 
     lpzs_log_std[epoch] = torch.cat(lpzs).mean().item()
     std_log[epoch] = torch.cat(stds).mean(0).squeeze(0)
@@ -178,48 +171,20 @@ for epoch in range(1, n_epochs + 1):
     if (time.time() - start_time) > 84600:
         break
 
-    print('Epoch: {}, P(z): {:.4f}, mu: [{:.4f},{:.4f}], std: {}'.format(epoch,
-                                                                         torch.cat(lpzs).mean().item(),
-                                                                         mu[0][0].item(),
-                                                                         mu[0][1].item(),
-                                                                         np.round(std.data.tolist(), 4)))
+    print_stdout('Epoch: {}, P(z): {:.4f}, mu: [{:.4f},{:.4f}], std: {}'.format(epoch,
+                                                                                torch.cat(lpzs).mean().item(),
+                                                                                mu[0][0].item(),
+                                                                                mu[0][1].item(),
+                                                                                np.round(std.data.tolist(), 4)))
 
-fig, ax = plt.subplots(1, 2, figsize=(10, 5))
-
-x_plt = list(lpzs_log_std.keys())
-y_plt = list(lpzs_log_std.values())
-ax[0].set_title('Loss Curve')
-ax[0].set_ylabel('$-log(p(z|\mu, p))$')
-ax[0].set_xlabel('Epoch')
-ax[0].plot(x_plt, y_plt)
-
-distances_plot = list(constant_log_std.values())
-constants_plot = list(distance_log_std.values())
-ax[1].set_title('Distance vs Constant plot')
-ax[1].plot(x_plt, distances_plot)
-ax2 = ax[1].twinx()
-ax2.plot(x_plt, constants_plot)
-
-fig.tight_layout()
-plt.savefig(model_folder + model_name + 'land_std_training_curve.pdf')
-plt.show()
-
-fig, ax = plt.subplots(2, 2, figsize=(10, 5))
-std_stack = np.stack(list(std_log.values()))
-
-for idx, sub_ax in enumerate(ax.flat):
-    sigma = '$\sigma_' + str(idx + 1) + '$'
-    sub_ax.set_title(sigma + '-Change')
-    sub_ax.set_ylabel(sigma + ' values')
-    sub_ax.set_xlabel('Epoch')
-
-ax[0, 0].plot(x_plt, std_stack[:, 0, 0], label="$\sigma_1$")
-ax[0, 1].plot(x_plt, std_stack[:, 0, 1], label="$\sigma_2$")
-ax[1, 0].plot(x_plt, std_stack[:, 1, 0], label="$\sigma_3$")
-ax[1, 1].plot(x_plt, std_stack[:, 1, 1], label="$\sigma_4$")
-
-fig.tight_layout()
-plt.savefig(model_folder + model_name + 'land_std_tracking.pdf')
+visualize.plot_training_curves(nll_log=lpzs_log_std,
+                               constant_log=constant_log_std,
+                               distance_log=distance_log_std,
+                               output_filename=model_folder + model_name + 'land_std_training_curve.pdf')
+if std.dim() == 1:
+    visualize.plot_std(std_log, output_filename=model_folder + model_name + 'land_std_plot.pdf')
+else:
+    visualize.plot_covariance(std_log, output_filename=model_folder + model_name + 'land_cov_plot.pdf')
 
 mu_save = mu.cpu().detach().numpy()
 std_save = std.cpu().detach().numpy()

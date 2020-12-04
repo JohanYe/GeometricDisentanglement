@@ -5,7 +5,7 @@ import geoml.nnj as nnj
 from torch.nn.functional import softplus
 import torch.distributions as td
 from torch.distributions.kl import kl_divergence as KL
-from sklearn import mixture
+# from sklearn import mixture
 
 
 class BasicVAE(nn.Module):
