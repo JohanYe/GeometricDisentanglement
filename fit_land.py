@@ -9,7 +9,7 @@ import land
 import seaborn as sns
 from geoml import manifold, curve
 from tqdm import tqdm
-from mpl_toolkits.axes_grid1 import make_axes_locatable
+import time
 
 sns.set_style("darkgrid")
 model_folder = "./model/best_beta1/"
@@ -17,8 +17,9 @@ model_name = 'best_beta1'
 load_land = False
 simple = False
 hpc = True
+start_time = time.time()
 
-batch_size = 512
+batch_size = 1024 if hpc else 512
 layers = torch.linspace(28 ** 2, 2, 3).int()
 num_components = 50
 label_thresh = 4  # include only a subset of MNIST classes
@@ -67,14 +68,13 @@ Mx, My = torch.meshgrid(ran0, ran1)
 Mxy = torch.cat((Mx.t().reshape(-1, 1), My.t().reshape(-1, 1)), dim=1)  # (meshsize^2)x2
 Mxy.requires_grad = False
 dv = (ran0[-1] - ran0[0]) * (ran1[-1] - ran1[0]) / (meshsize ** 2)
-batch_size = 1024 if hpc else 512
 iters = (Mxy.shape[0] // batch_size) + 1
 curves = {}
 
 optimizer = torch.optim.Adam([mu], lr=1e-3, weight_decay=1e-3)
 Cs, mus, lpzs, constants, distances = [], [], [], [], []
 lpzs_log, mu_log, constant_log, distance_log = {}, {}, {}, {}
-n_epochs = 2
+n_epochs = 100
 
 net.eval()
 for epoch in range(1, n_epochs + 1):
@@ -95,8 +95,8 @@ for epoch in range(1, n_epochs + 1):
         constants.append(constant.unsqueeze(0).cpu().detach())
         distances.append(dist2.sqrt().sum().unsqueeze(0).cpu().detach())
 
-        if idx == 2:
-            break
+        # if idx == 2:
+        #     break
 
     lpzs_log[epoch] = torch.cat(lpzs).mean().item()
     mu_log[epoch] = torch.cat(mus).mean(0)
@@ -146,7 +146,7 @@ plt.savefig(model_folder + model_name + 'land_mu_tracking.pdf')
 optimizer = torch.optim.Adam([std], lr=1e-3, weight_decay=1e-3)
 Cs, stds, lpzs, constants, distances = [], [], [], [], []
 lpzs_log_std, std_log, constant_log_std, distance_log_std = {}, {}, {}, {}
-n_epochs = 2
+n_epochs = 100
 
 net.eval()
 for epoch in range(1, n_epochs + 1):
@@ -167,13 +167,16 @@ for epoch in range(1, n_epochs + 1):
         constants.append(constant.unsqueeze(0).cpu().detach())
         distances.append(dist2.sqrt().sum().unsqueeze(0).cpu().detach())
 
-        if idx == 2:
-            break
+        # if idx == 2:
+        #     break
 
     lpzs_log_std[epoch] = torch.cat(lpzs).mean().item()
     std_log[epoch] = torch.cat(stds).mean(0).squeeze(0)
     constant_log_std[epoch] = torch.cat(constants, dim=0).mean()
     distance_log_std[epoch] = torch.cat(distances, dim=0).mean()
+
+    if (time.time() - start_time) > 84600:
+        break
 
     print('Epoch: {}, P(z): {:.4f}, mu: [{:.4f},{:.4f}], std: {}'.format(epoch,
                                                                          torch.cat(lpzs).mean().item(),
@@ -217,3 +220,8 @@ ax[1, 1].plot(x_plt, std_stack[:, 1, 1], label="$\sigma_4$")
 
 fig.tight_layout()
 plt.savefig(model_folder + model_name + 'land_std_tracking.pdf')
+
+mu_save = mu.cpu().detach().numpy()
+std_save = std.cpu().detach().numpy()
+np.save(model_folder + 'LAND_mu_' + model_name + '.npy', mu_save, allow_pickle=True)
+np.save(model_folder + 'LAND_std_' + model_name + '.npy', std_save, allow_pickle=True)
