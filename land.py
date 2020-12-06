@@ -44,8 +44,10 @@ def estimate_constant_simple(mu, std, grid, dv, model, batch_size=512):
 
             # calcs
             D2, _, _ = model.dist2_explicit(mu_repeated, grid_points_batch.to(device), A=None)
-            exponential_term = (-(D2) / (2 * std ** 2)).squeeze(-1).exp()
+            exponential_term = (-D2 / (2 * std ** 2)).squeeze(-1).exp()
+            print(exponential_term.shape)
             metric_term = model.metric(grid_points_batch.to(device)).det().sqrt()
+            print(metric_term.shape)
             constant = metric_term * exponential_term * dv
 
             if i == 0:
@@ -79,7 +81,7 @@ def LAND_fullcov(loc, A, z_points, dv, grid_points, constant=None, model=None, l
 
 def LAND_fullcov_sampled(loc, cov_matrix, endpoints, dv, metric_sum, model=None, logspace=True, init_curve=None):
     """
-    Uses a scalar covariance instead of a covariance matrix
+    full covariance matrix, expecting sampled grid data points.
     """
 
     if init_curve is not None:
@@ -99,6 +101,7 @@ def LAND_fullcov_sampled(loc, cov_matrix, endpoints, dv, metric_sum, model=None,
 
 
 def estimate_constant_full(mu, A, grid, dv, model, batch_size=512):
+    """ Estimate constant using a full covariance matrix. """
     iters = (grid.shape[0] // batch_size) + 1
     device = torch.device('cuda:0') if torch.cuda.is_available() else torch.device('cpu')
 
@@ -113,6 +116,7 @@ def estimate_constant_full(mu, A, grid, dv, model, batch_size=512):
             D2, _, _ = model.dist2_explicit(mu_repeated, grid_points_batch.to(device), A=A)
             exponential_term = (-D2 / 2).squeeze(-1).exp()
             metric_term = model.metric(grid_points_batch.to(device)).det().sqrt()
+            print(exponential_term.shape, metric_term.shape)
             constant = metric_term * exponential_term * dv
 
             if i == 0:

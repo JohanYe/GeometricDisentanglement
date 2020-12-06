@@ -49,7 +49,7 @@ net.load_state_dict(new_dict)
 net.eval()
 
 with torch.no_grad():
-    z = torch.chunk(net.encoder(x_train.to(device)), chunks=2, dim=-1)[0].cpu()
+    z = torch.chunk(net.encoder(x_train.to(device)), chunks=2, dim=-1)[0].cpu() # [0] = mus
     minz, _ = z.min(dim=0)  # d
     maxz, _ = z.max(dim=0)  # d
     z_data = torch.utils.data.TensorDataset(z)

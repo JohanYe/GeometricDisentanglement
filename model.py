@@ -197,7 +197,7 @@ class VAE(nn.Module, EmbeddedManifold):
                 sum_loss = 0
                 # implements cyclic KL scaling
                 if cycle < num_cycles - num_cycles // 5:
-                    lam = min(max_kl, max(0.0, 10.0 * (epoch - switch_epoch) / (num_epochs - switch_epoch)))
+                    lam = min(max_kl, max(0.0, 2 * max_kl * (epoch - switch_epoch) / (num_epochs - switch_epoch)))
                 else:
                     lam = 1
                 for batch_idx, (data,) in enumerate(data_loader):
