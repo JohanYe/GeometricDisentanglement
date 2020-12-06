@@ -25,7 +25,7 @@ def LAND_scalar_variance(loc, scale, z_points, grid_points, dv, constant=None, m
 
     pz = (1 / constant) * inside.exp()
     if logspace:
-        lpz = -1 * (pz).log()
+        lpz = -1 * (pz + 1e-15).log()
         return lpz, init_curve, D2, constant
     else:
         return pz, init_curve, D2, constant
@@ -71,7 +71,7 @@ def LAND_fullcov(loc, A, z_points, dv, grid_points, constant=None, model=None, l
     inside = (-1 * D2 / 2).squeeze(-1)
     pz = (1 / constant) * inside.exp()
     if logspace:
-        lpz = -1 * (pz).log()
+        lpz = -1 * (pz + 1e-15).log()
         return lpz, init_curve, D2, constant
     else:
         return pz, init_curve, D2, constant

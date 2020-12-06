@@ -16,12 +16,10 @@ sns.set_style("darkgrid")
 model_folder = "./model/best_beta1/"
 model_name = 'best_beta1'
 load_land = False
-simple = False
 hpc = False
-simple_land = False
 fast_train = False
 debug_mode = True
-full_cov = True
+full_cov = False
 start_time = time.time()
 
 batch_size = 1024 if hpc else 512
@@ -80,12 +78,12 @@ iters = (Mxy.shape[0] // batch_size) + 1
 curves = {}
 
 optimizer = torch.optim.Adam([mu], lr=1e-3, weight_decay=1e-3)
-Cs, mus, lpzs, constants, distances = [], [], [], [], []
 lpzs_log, mu_log, constant_log, distance_log = {}, {}, {}, {}
 n_epochs = 2 if debug_mode else 100
 
 net.eval()
 for epoch in range(1, n_epochs + 1):
+    Cs, mus, lpzs, constants, distances = [], [], [], [], []
     for idx, batch in enumerate(tqdm(train_loader)):
         if fast_train:
             constant = None if idx % 5 == 0 else constant
@@ -130,12 +128,12 @@ visualize.plot_training_curves(nll_log=lpzs_log,
 visualize.plot_mu_curve(mu_log, output_filename=model_folder + model_name + 'land_mu_plot.pdf')
 
 optimizer = torch.optim.Adam([std], lr=3e-4)
-Cs, stds, lpzs, constants, distances = [], [], [], [], []
 lpzs_log_std, std_log, constant_log_std, distance_log_std = {}, {}, {}, {}
 n_epochs = 2 if debug_mode else 100
 
 net.eval()
 for epoch in range(1, n_epochs + 1):
+    Cs, stds, lpzs, constants, distances = [], [], [], [], []
     for idx, batch in enumerate(tqdm(train_loader)):
 
         if fast_train:
