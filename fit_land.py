@@ -4,11 +4,8 @@ import model
 from utils import load_checkpoint, custom_dataset, print_stdout
 import visualize
 import numpy as np
-import matplotlib.pyplot as plt
-import os
 import land
 import seaborn as sns
-from geoml import manifold, curve
 from tqdm import tqdm
 import time
 
@@ -19,7 +16,7 @@ load_land = False
 hpc = False
 fast_train = False
 debug_mode = True
-full_cov = False
+full_cov = True
 start_time = time.time()
 
 batch_size = 1024 if hpc else 512
@@ -49,7 +46,7 @@ net.load_state_dict(new_dict)
 net.eval()
 
 with torch.no_grad():
-    z = torch.chunk(net.encoder(x_train.to(device)), chunks=2, dim=-1)[0].cpu() # [0] = mus
+    z = torch.chunk(net.encoder(x_train.to(device)), chunks=2, dim=-1)[0].cpu()  # [0] = mus
     minz, _ = z.min(dim=0)  # d
     maxz, _ = z.max(dim=0)  # d
     z_data = torch.utils.data.TensorDataset(z)
@@ -59,10 +56,10 @@ if load_land:
     mu = torch.Tensor(np.load(model_folder + 'land_mu.npy')).to(device).requires_grad_(True)
     std = torch.Tensor(np.load(model_folder + 'land_std.npy')).to(device).requires_grad_(True)
 else:  # manual init
-    mu_np = np.expand_dims(np.array([0, 0]), axis=0)
+    mu_np = np.expand_dims(np.array([-0.45, -0.05]), axis=0)
     mu = torch.tensor(mu_np).to(device).float().requires_grad_(True)
     if full_cov:
-        std = torch.tensor([[1 / 30, 1 / 60], [1 / 61, 1 / 31]]).to(device).float().requires_grad_(True)
+        std = torch.tensor([[1 / 50, 1 / 100], [1 / 101, 1 / 51]]).to(device).float().requires_grad_(True)
     else:
         std = torch.tensor([40.]).to(device).float().requires_grad_(True)
 
@@ -77,9 +74,9 @@ dv = (ran0[-1] - ran0[0]) * (ran1[-1] - ran1[0]) / (meshsize ** 2)
 iters = (Mxy.shape[0] // batch_size) + 1
 curves = {}
 
-optimizer = torch.optim.Adam([mu], lr=1e-3, weight_decay=1e-3)
+optimizer = torch.optim.Adam([mu], lr=1e-4, weight_decay=1e-3)
 lpzs_log, mu_log, constant_log, distance_log = {}, {}, {}, {}
-n_epochs = 2 if debug_mode else 100
+n_epochs = 2 if debug_mode else 5
 
 net.eval()
 for epoch in range(1, n_epochs + 1):
@@ -127,9 +124,9 @@ visualize.plot_training_curves(nll_log=lpzs_log,
 
 visualize.plot_mu_curve(mu_log, output_filename=model_folder + model_name + 'land_mu_plot.pdf')
 
-optimizer = torch.optim.Adam([std], lr=3e-4)
+optimizer = torch.optim.Adam([std], lr=1e-6)
 lpzs_log_std, std_log, constant_log_std, distance_log_std = {}, {}, {}, {}
-n_epochs = 2 if debug_mode else 100
+n_epochs = 2 if debug_mode else 200
 
 net.eval()
 for epoch in range(1, n_epochs + 1):
