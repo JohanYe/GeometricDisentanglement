@@ -13,9 +13,9 @@ sns.set_style("darkgrid")
 model_folder = "./model/best_beta1/"
 model_name = "simple_land"
 device = torch.device('cuda:0') if torch.cuda.is_available() else torch.device('cpu')
-mu_np = np.expand_dims(np.array([-0.2448, -0.0057]), axis=0)
+mu_np = np.expand_dims(np.array( [-0.2161,0.0664]), axis=0)
 mu = torch.tensor(mu_np).to(device).float().requires_grad_(False)
-std = torch.tensor([[0.0214, 0.027], [-0.001, -0.0189]]).to(device).float().requires_grad_(False)
+std = torch.tensor( [[-0.0028, -0.0597], [-0.0477, -0.0706]]).to(device).float().requires_grad_(False)
 
 batch_size = 1024
 layers = torch.linspace(28 ** 2, 2, 3).int()
@@ -31,6 +31,7 @@ num_classes = y_train[idx].unique().numel()
 x_train = x_train[idx]
 y_train = y_train[idx]
 N = x_train.shape[0]
+
 
 # load model
 net = model.VAE(x_train, layers, num_components=num_components, device=device)
@@ -48,48 +49,53 @@ with torch.no_grad():
     z = torch.chunk(net.encoder(x_train[:subset].to(device)), chunks=2, dim=-1)[0]
 labels = y_train[:subset]
 
-plt.subplots(figsize=(10, 10))
-
-if z.shape[1] == 2:
-    minz, _ = z.min(dim=0)  # d
-    maxz, _ = z.max(dim=0)  # d
-    alpha = 0.1 * (maxz - minz)  # + 10% to each edge
-    minz -= alpha  # d
-    maxz += alpha  # d
-
-    # meshgrid creating
-    meshsize = 40
-    ran0 = torch.linspace(minz[0].item(), maxz[0].item(), meshsize)
-    ran1 = torch.linspace(minz[1].item(), maxz[1].item(), meshsize)
-    Mx, My = torch.meshgrid(ran0, ran1)
-    Mxy = torch.cat((Mx.t().reshape(-1, 1), My.t().reshape(-1, 1)), dim=1)  # (meshsize^2)x2
-    Mxy.requires_grad = False
-    dv = (ran0[-1] - ran0[0]) * (ran1[-1] - ran1[0]) / (meshsize ** 2)
-    batch_size = 256
-    iters = (Mxy.shape[0] // batch_size) + 1
-    curves = {}
-
-    with torch.no_grad():
-        varim = net.decoder_scale(Mxy.to(device)).pow(2).mean(dim=-1).reshape(meshsize, meshsize)
-        varim = varim.cpu().detach().numpy()
-    plt.imshow(varim, extent=(ran0[0].item(), ran0[-1].item(), ran1[0].item(), ran1[-1].item()), origin='lower')
-    plt.colorbar()
-
-    for label in labels.unique():
-        idx = labels == label
-        zi = z[idx].cpu().detach().numpy()
-        plt.plot(zi[:, 0], zi[:, 1], '.')
-else:
-    raise Exception('Latent dimension not suitable for plotting')
-
-# compute the geodesics
-mu_repeated = mu.repeat([Mxy.shape[0], 1]).detach()
-C, success = net.connecting_geodesic(mu_repeated, Mxy.to(device))
-C.plot()
-plt.show()
+# plt.subplots(figsize=(10, 10))
+#
+# if z.shape[1] == 2:
+#     minz, _ = z.min(dim=0)  # d
+#     maxz, _ = z.max(dim=0)  # d
+#     alpha = 0.1 * (maxz - minz)  # + 10% to each edge
+#     minz -= alpha  # d
+#     maxz += alpha  # d
+#
+#     # meshgrid creating
+#     meshsize = 100
+#     ran0 = torch.linspace(minz[0].item(), maxz[0].item(), meshsize)
+#     ran1 = torch.linspace(minz[1].item(), maxz[1].item(), meshsize)
+#     Mx, My = torch.meshgrid(ran0, ran1)
+#     Mxy = torch.cat((Mx.t().reshape(-1, 1), My.t().reshape(-1, 1)), dim=1)  # (meshsize^2)x2
+#     Mxy.requires_grad = False
+#     dv = (ran0[-1] - ran0[0]) * (ran1[-1] - ran1[0]) / (meshsize ** 2)
+#     batch_size = 256
+#     iters = (Mxy.shape[0] // batch_size) + 1
+#     curves = {}
+#
+#     with torch.no_grad():
+#         varim = net.decoder_scale(Mxy.to(device)).pow(2).mean(dim=-1).reshape(meshsize, meshsize)
+#         varim = varim.cpu().detach().numpy()
+#     plt.imshow(varim, extent=(ran0[0].item(), ran0[-1].item(), ran1[0].item(), ran1[-1].item()), origin='lower')
+#     plt.colorbar()
+#
+#     for label in labels.unique():
+#         idx = labels == label
+#         zi = z[idx].cpu().detach().numpy()
+#         plt.plot(zi[:, 0], zi[:, 1], '.')
+# else:
+#     raise Exception('Latent dimension not suitable for plotting')
+#
+# # compute the geodesics
+# mu_repeated = mu.repeat([Mxy.shape[0], 1]).detach()
+# C, success = net.connecting_geodesic(mu_repeated, Mxy.to(device))
+# C.plot()
+# plt.show()
 
 # contour plot
-meshsize = 100
+minz, _ = z.min(dim=0)  # d
+maxz, _ = z.max(dim=0)  # d
+alpha = 0.1 * (maxz - minz)  # + 10% to each edge
+minz -= alpha  # d
+maxz += alpha  # d
+meshsize = 150
 ran0 = torch.linspace(minz[0].item(), maxz[0].item(), meshsize, device=device)
 ran1 = torch.linspace(minz[1].item(), maxz[1].item(), meshsize, device=device)
 Mx, My = torch.meshgrid(ran0, ran1)
@@ -100,23 +106,25 @@ dataset = custom_dataset(data_tensor=Mxy)
 data_loader = torch.utils.data.DataLoader(dataset, batch_size=batch_size, shuffle=False)  # Note shuffle false
 pz_plt, approx_constant = None, None
 
-approx_constant = land.estimate_constant_full(mu=mu, A=std, grid=Mxy, dv=dv, model=net, batch_size=256, sum=False)
+approx_constant, metrics = land.estimate_constant_full(mu=mu, A=std, grid=Mxy, dv=dv, model=net, batch_size=256, sum=False)
 
 # plot latent variables
 fig, ax = plt.subplots(1, 2, figsize=(11, 5))
-subset = 4000
+subset = 6000
 with torch.no_grad():
     z = torch.chunk(net.encoder(x_train[:subset].to(device)), chunks=2, dim=-1)[0]
 labels = y_train[:subset]
-for label in labels.unique():
+for y, label in enumerate(labels.unique()):
     idx = labels == label
     zi = z[idx].cpu().detach().numpy()
-    plt.plot(zi[:, 0], zi[:, 1], '.')
+    ax[0].plot(zi[:, 0], zi[:, 1], '.', label=y)
+
 
 constant_tmp = (approx_constant.reshape(meshsize, meshsize))
 # constant_tmp[constant_tmp > 2] = 2
 ax[0].imshow(constant_tmp, extent=(ran0[0].item(), ran0[-1].item(), ran1[0].item(), ran1[-1].item()), origin='lower')
 ax[0].set_title('LAND constant Contours Plot')
+ax[0].legend(loc='best')
 plt.axis('off')
 im = ax[1].imshow(constant_tmp, extent=(ran0[0].item(), ran0[-1].item(), ran1[0].item(), ran1[-1].item()),
                   origin='lower')
@@ -133,27 +141,31 @@ for j, gridpoints_batch in enumerate(tqdm(data_loader)):
         exponential_term = (-1 * D2 / 2).squeeze(-1).exp()
         pz = (1 / approx_constant.sum()) * exponential_term
 
+    if torch.isnan(D2.mean()):
+        break
+
     if j == 0:
         pz_plt = pz.cpu().detach()
-        distances = D2.sqrt().cpu().detach()
+        distances = D2.cpu().detach()
     else:
         pz_plt = torch.cat((pz_plt, pz.cpu().detach()), dim=0)
-        distances = torch.cat((distances, D2.sqrt().cpu().detach()), dim=0)
+        distances = torch.cat((distances, D2.cpu().detach()), dim=0)
 
 # plot latent variables
 fig, ax = plt.subplots(1, 2, figsize=(11, 5))
-subset = 4000
+subset = 6000
 with torch.no_grad():
     z = torch.chunk(net.encoder(x_train[:subset].to(device)), chunks=2, dim=-1)[0]
 labels = y_train[:subset]
-for label in labels.unique():
+for y, label in enumerate(labels.unique()):
     idx = labels == label
     zi = z[idx].cpu().detach().numpy()
-    ax[0].plot(zi[:, 0], zi[:, 1], '.')
+    ax[0].plot(zi[:, 0], zi[:, 1], '.', label=y)
 
 pz_plt_tmp = pz_plt.reshape(meshsize, meshsize)
 ax[0].imshow(pz_plt_tmp, extent=(ran0[0].item(), ran0[-1].item(), ran1[0].item(), ran1[-1].item()), origin='lower')
 ax[0].set_axis_off()
+ax[0].legend(loc='best')
 im = ax[1].imshow(pz_plt_tmp, extent=(ran0[0].item(), ran0[-1].item(), ran1[0].item(), ran1[-1].item()), origin='lower')
 fig.colorbar(im)
 ax[0].set_title('LAND p(z) Contours Plot')
@@ -165,16 +177,18 @@ fig, ax = plt.subplots(1, 2, figsize=(12, 5))
 with torch.no_grad():
     z = torch.chunk(net.encoder(x_train[:subset].to(device)), chunks=2, dim=-1)[0]
 labels = y_train[:subset]
-for label in labels.unique():
+for y, label in enumerate(labels.unique()):
     idx = labels == label
     zi = z[idx].cpu().detach().numpy()
-    ax[0].plot(zi[:, 0], zi[:, 1], '.')
+    ax[0].plot(zi[:, 0], zi[:, 1], '.', label=y)
 
 distance_plot = distances.reshape(meshsize, meshsize)
 ax[0].imshow(distance_plot, extent=(ran0[0].item(), ran0[-1].item(), ran1[0].item(), ran1[-1].item()), origin='lower')
 ax[0].set_axis_off()
+ax[0].legend(loc='best')
 im = ax[1].imshow(distance_plot, extent=(ran0[0].item(), ran0[-1].item(), ran1[0].item(), ran1[-1].item()), origin='lower')
 fig.colorbar(im)
 ax[0].set_title('LAND distances Plot')
 ax[1].set_title('LAND distances Plot')
+
 plt.show()

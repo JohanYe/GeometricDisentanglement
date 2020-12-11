@@ -25,7 +25,7 @@ def LAND_scalar_variance(loc, scale, z_points, grid_points, dv, constant=None, m
 
     pz = (1 / constant) * inside.exp()
     if logspace:
-        lpz = -1 * (pz + 1e-15).log()
+        lpz = -1 * pz.log()
         return lpz, init_curve, D2, constant
     else:
         return pz, init_curve, D2, constant
@@ -70,8 +70,9 @@ def LAND_fullcov(loc, A, z_points, dv, grid_points, constant=None, model=None, l
 
     inside = (-1 * D2 / 2).squeeze(-1)
     pz = (1 / constant) * inside.exp()
+
     if logspace:
-        lpz = -1 * (pz + 1e-15).log()
+        lpz = -1 * pz.log()
         return lpz, init_curve, D2, constant
     else:
         return pz, init_curve, D2, constant
@@ -118,12 +119,16 @@ def estimate_constant_full(mu, A, grid, dv, model, batch_size=512, sum=True):
 
             if i == 0:
                 approx_constant = constant.cpu()
+                if not sum:
+                    metric_vector = metric_term.detach().cpu()
             else:
                 approx_constant = torch.cat((approx_constant, constant.cpu()), dim=0)
+                if not sum:
+                    metric_vector = torch.cat((metric_vector, constant.cpu()), dim=0)
     if sum:
         return approx_constant.sum()
     else:
-        return approx_constant
+        return approx_constant, metric_vector
 
 
 def land_auto(loc, scale, z_points, grid, dv, model, constant=None, batch_size=1024):

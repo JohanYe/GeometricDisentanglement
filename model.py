@@ -5,6 +5,8 @@ import geoml.nnj as nnj
 from torch.nn.functional import softplus
 import torch.distributions as td
 from torch.distributions.kl import kl_divergence as KL
+
+
 # from sklearn import mixture
 
 
@@ -259,6 +261,135 @@ class VAE(nn.Module, EmbeddedManifold):
                 optimizer.step()
             avg_loss = sum_loss / len(data_loader.dataset)
             print('(STD)  ====> Epoch: {} Average loss: {:.4f}'.format(epoch, avg_loss))
+
+    def plot(self, z, labels, meshsize=150):
+        import matplotlib.pyplot as plt
+        if z.shape[1] == 2:
+            minz, _ = z.min(dim=0)  # d
+            maxz, _ = z.max(dim=0)  # d
+            alpha = 0.1 * (maxz - minz)  # d
+            minz -= alpha  # d
+            maxz += alpha  # d
+
+            ran0 = torch.linspace(minz[0].item(), maxz[0].item(), meshsize, device=self.device)
+            ran1 = torch.linspace(minz[1].item(), maxz[1].item(), meshsize, device=self.device)
+            Mx, My = torch.meshgrid(ran0, ran1)
+            Mxy = torch.cat((Mx.t().reshape(-1, 1), My.t().reshape(-1, 1)), dim=1)  # (meshsize^2)x2
+            with torch.no_grad():
+                varim = self.decoder_scale(Mxy).pow(2).mean(dim=-1).reshape(meshsize, meshsize)
+                varim = varim.cpu().detach().numpy()
+            plt.imshow(varim, extent=(ran0[0].item(), ran0[-1].item(), ran1[0].item(), ran1[-1].item()), origin='lower')
+            plt.colorbar()
+
+            for label in labels.unique():
+                idx = labels == label
+                zi = z[idx].cpu().detach().numpy()
+                plt.plot(zi[:, 0], zi[:, 1], '.')
+        else:
+            raise Exception('Latent dimension not suitable for plotting')
+
+    def embed(self, points, jacobian=False):
+        """
+        Embed the manifold into (mu, std) space.
+
+        Input:
+            points:     a Nx(d) or BxNx(d) torch Tensor representing a (batch of a)
+                        set of N points in latent space that will be embedded
+                        in R^2D.
+
+        Optional input:
+            jacobian:   a boolean indicating if the Jacobian matrix of the function
+                        should also be returned. Default is False.
+
+        Output:
+            embedded:   a Nx(2D) of BxNx(2D) torch tensor containing the N embedded points.
+                        The first Nx(d) part contain the mean part of the embedding,
+                        whlie the last Nx(d) part contain the standard deviation
+                        embedding.
+
+        Optional output:
+            J:          If jacobian=True then a second Nx(2D)x(d) or BxNx(2D)x(d)
+                        torch tensor is returned that contain the Jacobian matrix
+                        of the embedding function.
+        """
+        std_scale = 1.0
+        is_batched = points.dim() > 2
+        if not is_batched:
+            points = points.unsqueeze(0)  # BxNxD
+
+        if jacobian:
+            mu, Jmu = self.decoder_loc(points, jacobian=True)  # BxNxD, BxNxDx(d)
+            std, Jstd = self.decoder_scale(points, jacobian=True)  # BxNxD, BxNxDx(d)
+            embedded = torch.cat((mu, std_scale * std), dim=2)  # BxNx(2D)
+            J = torch.cat((Jmu, std_scale * Jstd), dim=2)  # BxNx(2D)x(d)
+        else:
+            mu = self.decoder_loc(points)  # BxNxD
+            std = self.decoder_scale(points)  # BxNxD
+            embedded = torch.cat((mu, std_scale * std), dim=2)  # BxNx(2D)
+
+        if not is_batched:
+            embedded = embedded.squeeze(0)
+            if jacobian:
+                J = J.squeeze(0)
+
+        if jacobian:
+            return embedded, J
+        else:
+            return embedded
+
+
+class linear_vae(nn.Module, EmbeddedManifold):
+    def __init__(self):
+        super(linear_vae, self).__init__()
+
+        self.device = torch.device('cuda:0') if torch.cuda.is_available() else torch.device('cpu')
+        self.encoder = nn.Sequential(nn.Linear(784, 256),
+                                     nn.Linear(256, 4))
+        self.decoder_loc = nn.Sequential(nn.Linear(2, 256),
+                                     nn.Linear(256, 784))
+        self.decoder_scale = 0.01 * torch.ones(784).to(self.device)
+
+        self.prior_loc = torch.zeros(2).to(self.device)
+        self.prior_scale = torch.ones(2).to(self.device)
+        self.prior = td.Normal(loc=self.prior_loc, scale=self.prior_scale)
+
+    def encode(self, x):
+        z_loc, z_scale = torch.chunk(self.encoder(x), chunks=2, dim=-1)
+        return td.Normal(loc=z_loc, scale=z_scale.mul(0.5).exp() + 1e-10)
+
+    def decode(self, z):
+        x_loc = self.decoder_loc(z)
+        return td.Normal(loc=x_loc, scale=self.decoder_scale)
+
+    def elbo(self, x, kl_weight=1.0):
+        q = self.encode(x)
+        z = q.rsample()  # (batch size)x(latent dim)
+        px_z = self.decode(z)  # p(x|z)
+        ELBO = px_z.log_prob(x).mean() - kl_weight * KL(q, self.prior).mean()
+        return ELBO
+
+    def fit_mean(self, data_loader, num_epochs=150, num_cycles=30, max_kl=5):
+        switch_epoch = num_epochs // 6
+        optimizer = torch.optim.Adam(self.parameters(), lr=1e-4)
+
+        for cycle in range(1, num_cycles + 1):
+            print('Cycle:', cycle)
+            for epoch in range(num_epochs):
+                sum_loss = 0
+                # implements cyclic KL scaling
+                if cycle < num_cycles - num_cycles // 5:
+                    lam = min(max_kl, max(0.0, 2 * max_kl * (epoch - switch_epoch) / (num_epochs - switch_epoch)))
+                else:
+                    lam = 1
+                for batch_idx, (data,) in enumerate(data_loader):
+                    data = data.to(self.device)
+                    optimizer.zero_grad()
+                    loss = -self.elbo(data, lam)
+                    loss.backward()
+                    optimizer.step()
+                    sum_loss += loss.item() * len(data)
+                avg_loss = sum_loss / len(data_loader.dataset)
+                print('(MEAN; lambda={:.4f}) ====> Epoch: {} Average loss: {:.4f}'.format(lam, epoch, avg_loss))
 
     def plot(self, z, labels, meshsize=150):
         import matplotlib.pyplot as plt
