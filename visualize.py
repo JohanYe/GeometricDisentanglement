@@ -16,9 +16,11 @@ def plot_training_curves(nll_log, constant_log, distance_log, output_filename):
     distances_plot = list(distance_log.values())
     constants_plot = list(constant_log.values())
     ax[1].set_title('Distance vs Constant plot')
-    ax[1].plot(x_plt, distances_plot)
+    ax[1].plot(x_plt, distances_plot, label="distance")
     ax2 = ax[1].twinx()
-    ax2.plot(x_plt, constants_plot)
+    ax2.plot(x_plt, constants_plot, c="red", label="constant")
+    ax[1].legend(loc="best")
+    ax2.legend(loc="best")
 
     fig.tight_layout()
     plt.savefig(output_filename, bbox_inches="tight")

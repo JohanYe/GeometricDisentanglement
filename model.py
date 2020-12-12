@@ -343,15 +343,18 @@ class linear_vae(nn.Module, EmbeddedManifold):
         super(linear_vae, self).__init__()
 
         self.device = torch.device('cuda:0') if torch.cuda.is_available() else torch.device('cpu')
-        self.encoder = nn.Sequential(nn.Linear(784, 256),
-                                     nn.Linear(256, 4))
-        self.decoder_loc = nn.Sequential(nn.Linear(2, 256),
-                                     nn.Linear(256, 784))
-        self.decoder_scale = 0.01 * torch.ones(784).to(self.device)
+        self.encoder = nnj.Sequential(nnj.Linear(784, 256),
+                                      nnj.Linear(256, 4))
+        self.decoder_loc = nnj.Sequential(nnj.Linear(2, 256),
+                                          nnj.Linear(256, 784))
+        self.init_decoder_scale = 0.01 * torch.ones(784).to(self.device)
 
         self.prior_loc = torch.zeros(2).to(self.device)
         self.prior_scale = torch.ones(2).to(self.device)
         self.prior = td.Normal(loc=self.prior_loc, scale=self.prior_scale)
+
+    def decoder_scale(self, z, jacobian=False):
+        return self.init_decoder_scale
 
     def encode(self, x):
         z_loc, z_scale = torch.chunk(self.encoder(x), chunks=2, dim=-1)
@@ -450,10 +453,11 @@ class linear_vae(nn.Module, EmbeddedManifold):
             mu, Jmu = self.decoder_loc(points, jacobian=True)  # BxNxD, BxNxDx(d)
             std, Jstd = self.decoder_scale(points, jacobian=True)  # BxNxD, BxNxDx(d)
             embedded = torch.cat((mu, std_scale * std), dim=2)  # BxNx(2D)
-            J = torch.cat((Jmu, std_scale * Jstd), dim=2)  # BxNx(2D)x(d)
+            # JY: Changed because constant variance
+            J = torch.cat((Jmu, std_scale * std), dim=2)  # BxNx(2D)x(d)
         else:
             mu = self.decoder_loc(points)  # BxNxD
-            std = self.decoder_scale(points)  # BxNxD
+            std = self.decoder_scale(points).unsqueeze(0).unsqueeze(0).repeat([mu.shape[0], mu.shape[1], 1])  # BxNxD
             embedded = torch.cat((mu, std_scale * std), dim=2)  # BxNx(2D)
 
         if not is_batched:
