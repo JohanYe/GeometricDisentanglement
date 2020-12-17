@@ -13,9 +13,9 @@ sns.set_style("darkgrid")
 model_folder = "./model/best_beta1/"
 model_name = "simple_land"
 device = torch.device('cuda:0') if torch.cuda.is_available() else torch.device('cpu')
-mu_np = np.expand_dims(np.array( [-0.2161,0.0664]), axis=0)
+mu_np = np.expand_dims(np.array([0.0679, -0.1089]), axis=0)
 mu = torch.tensor(mu_np).to(device).float().requires_grad_(False)
-std = torch.tensor( [[-0.0028, -0.0597], [-0.0477, -0.0706]]).to(device).float().requires_grad_(False)
+std = torch.tensor([[-0.0256,  0.059 ], [ 0.0353,  0.0349]]).to(device).float().requires_grad_(False)
 
 batch_size = 1024
 layers = torch.linspace(28 ** 2, 2, 3).int()
@@ -106,7 +106,8 @@ dataset = custom_dataset(data_tensor=Mxy)
 data_loader = torch.utils.data.DataLoader(dataset, batch_size=batch_size, shuffle=False)  # Note shuffle false
 pz_plt, approx_constant = None, None
 
-approx_constant, metrics = land.estimate_constant_full(mu=mu, A=std, grid=Mxy, dv=dv, model=net, batch_size=256, sum=False)
+with torch.no_grad():
+    approx_constant, metrics = land.estimate_constant_full(mu=mu, A=std, grid=Mxy, dv=dv, model=net, batch_size=256, sum=False)
 
 # plot latent variables
 fig, ax = plt.subplots(1, 2, figsize=(11, 5))
@@ -120,7 +121,7 @@ for y, label in enumerate(labels.unique()):
     ax[0].plot(zi[:, 0], zi[:, 1], '.', label=y)
 
 
-constant_tmp = (approx_constant.reshape(meshsize, meshsize))
+constant_tmp = (approx_constant.reshape(meshsize, meshsize)).cpu()
 # constant_tmp[constant_tmp > 2] = 2
 ax[0].imshow(constant_tmp, extent=(ran0[0].item(), ran0[-1].item(), ran1[0].item(), ran1[-1].item()), origin='lower')
 ax[0].set_title('LAND constant Contours Plot')

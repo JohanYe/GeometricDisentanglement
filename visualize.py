@@ -69,7 +69,7 @@ def plot_covariance(std_log, output_filename):
 
 
 def plot_std(std_log, output_filename):
-    fig, ax = plt.subplots(1,1 , figsize=(5, 5))
+    fig, ax = plt.subplots(1, 1, figsize=(5, 5))
     std_stack = np.stack(list(std_log.values()))
     x_plt = list(std_log.keys())
 
@@ -84,24 +84,22 @@ def plot_std(std_log, output_filename):
 
 def plot_eigenvalues(std_log, output_filename):
     n_epochs = len(std_log.keys())
-    test = torch.cat(list(std_log.values())).reshape(n_epochs,2,2)
+    test = torch.cat(list(std_log.values())).reshape(n_epochs, 2, 2)
     eig_log = {}
     for i in range(test.shape[0]):
         eig_values = (test[i].T @ test[i]).inverse().eig()
-        eig_log[i] = eig_values[0][:,0].sort(descending=True)[0]
+        eig_log[i] = eig_values[0][:, 0].sort(descending=True)[0]
 
-    import matplotlib.pyplot as plt
-
-    eig_values = torch.cat(list(eig_log.values())).reshape(n_epochs,2).numpy()
-    fig, ax = plt.subplots(1,2, figsize=(10,5))
+    eig_values = torch.cat(list(eig_log.values())).reshape(n_epochs, 2).numpy()
+    fig, ax = plt.subplots(1, 2, figsize=(10, 5))
     x_plt = list(std_log.keys())
 
-    ax[0].plot(x_plt, eig_values[:,0])
+    ax[0].plot(x_plt, eig_values[:, 0])
     ax[0].set_xlabel('Epoch')
     ax[0].set_title('Eigen value 1')
     ax[0].ticklabel_format(useOffset=False)
 
-    ax[1].plot(x_plt, eig_values[:,1])
+    ax[1].plot(x_plt, eig_values[:, 1])
     ax[1].set_xlabel('Epoch')
     ax[1].set_title('Eigen value 2')
     ax[1].ticklabel_format(useOffset=False)
