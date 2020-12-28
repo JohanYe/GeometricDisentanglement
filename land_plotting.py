@@ -13,9 +13,9 @@ sns.set_style("darkgrid")
 model_folder = "./model/best_beta1/"
 model_name = "simple_land"
 device = torch.device('cuda:0') if torch.cuda.is_available() else torch.device('cpu')
-mu_np = np.expand_dims(np.array([0.0679, -0.1089]), axis=0)
+mu_np = np.expand_dims(np.array([0.1343, 0.0037]), axis=0)
 mu = torch.tensor(mu_np).to(device).float().requires_grad_(False)
-std = torch.tensor([[-0.0256,  0.059 ], [ 0.0353,  0.0349]]).to(device).float().requires_grad_(False)
+std = torch.tensor([[-0.0386, 0.0507], [0.0331, 0.0504]]).to(device).float().requires_grad_(False)
 
 batch_size = 1024
 layers = torch.linspace(28 ** 2, 2, 3).int()
@@ -31,7 +31,6 @@ num_classes = y_train[idx].unique().numel()
 x_train = x_train[idx]
 y_train = y_train[idx]
 N = x_train.shape[0]
-
 
 # load model
 net = model.VAE(x_train, layers, num_components=num_components, device=device)
@@ -107,7 +106,8 @@ data_loader = torch.utils.data.DataLoader(dataset, batch_size=batch_size, shuffl
 pz_plt, approx_constant = None, None
 
 with torch.no_grad():
-    approx_constant, metrics = land.estimate_constant_full(mu=mu, A=std, grid=Mxy, dv=dv, model=net, batch_size=256, sum=False)
+    approx_constant, metrics = land.estimate_constant_full(mu=mu, A=std, grid=Mxy, dv=dv, model=net, batch_size=256,
+                                                           sum=False)
 
 # plot latent variables
 fig, ax = plt.subplots(1, 2, figsize=(11, 5))
@@ -120,13 +120,12 @@ for y, label in enumerate(labels.unique()):
     zi = z[idx].cpu().detach().numpy()
     ax[0].plot(zi[:, 0], zi[:, 1], '.', label=y)
 
-
 constant_tmp = (approx_constant.reshape(meshsize, meshsize)).cpu()
 # constant_tmp[constant_tmp > 2] = 2
 ax[0].imshow(constant_tmp, extent=(ran0[0].item(), ran0[-1].item(), ran1[0].item(), ran1[-1].item()), origin='lower')
 ax[0].set_title('LAND constant Contours Plot')
 ax[0].legend(loc='best')
-plt.axis('off')
+ax[0].axis('off')
 im = ax[1].imshow(constant_tmp, extent=(ran0[0].item(), ran0[-1].item(), ran1[0].item(), ran1[-1].item()),
                   origin='lower')
 ax[1].set_title('LAND constant Contours Plot')
@@ -187,7 +186,8 @@ distance_plot = distances.reshape(meshsize, meshsize)
 ax[0].imshow(distance_plot, extent=(ran0[0].item(), ran0[-1].item(), ran1[0].item(), ran1[-1].item()), origin='lower')
 ax[0].set_axis_off()
 ax[0].legend(loc='best')
-im = ax[1].imshow(distance_plot, extent=(ran0[0].item(), ran0[-1].item(), ran1[0].item(), ran1[-1].item()), origin='lower')
+im = ax[1].imshow(distance_plot, extent=(ran0[0].item(), ran0[-1].item(), ran1[0].item(), ran1[-1].item()),
+                  origin='lower')
 fig.colorbar(im)
 ax[0].set_title('LAND distances Plot')
 ax[1].set_title('LAND distances Plot')

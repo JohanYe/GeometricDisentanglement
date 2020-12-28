@@ -3,7 +3,7 @@ import numpy as np
 import torch
 
 
-def plot_training_curves(nll_log, constant_log, distance_log, output_filename):
+def plot_training_curves(nll_log, constant_log, distance_log, output_filename, silent=True):
     """ Plot training curve and dist + constant progression """
     fig, ax = plt.subplots(1, 2, figsize=(10, 5))
 
@@ -27,9 +27,11 @@ def plot_training_curves(nll_log, constant_log, distance_log, output_filename):
     fig.tight_layout()
     plt.savefig(output_filename, bbox_inches="tight")
     plt.show()
+    if silent:
+        plt.close()
 
 
-def plot_mu_curve(mu_log, output_filename):
+def plot_mu_curve(mu_log, output_filename, silent=True):
     """ mu progression """
     fig, ax = plt.subplots(1, 2, figsize=(10, 5))
     x_plt = list(mu_log.keys())
@@ -46,9 +48,12 @@ def plot_mu_curve(mu_log, output_filename):
     fig.tight_layout()
     plt.savefig(output_filename, bbox_inches="tight")
     plt.show()
+    if silent:
+        plt.close()
 
 
-def plot_covariance(std_log, output_filename):
+
+def plot_covariance(std_log, output_filename, silent=True):
     fig, ax = plt.subplots(2, 2, figsize=(10, 5))
     std_stack = torch.stack(list(std_log.values()))
     cov_stack = torch.inverse(torch.transpose(std_stack, 1, 2).bmm(std_stack))
@@ -66,9 +71,14 @@ def plot_covariance(std_log, output_filename):
     ax[1, 1].plot(x_plt, cov_stack[:, 1, 1], label="$\sigma_4$")
     plt.suptitle('Covariance matrix plot', y=1.05, fontsize=16)
     fig.tight_layout()
+    plt.savefig(output_filename, bbox_inches="tight")
+    plt.show()
+    if silent:
+        plt.close()
 
 
-def plot_std(std_log, output_filename):
+
+def plot_std(std_log, output_filename, silent=True):
     fig, ax = plt.subplots(1, 1, figsize=(5, 5))
     std_stack = np.stack(list(std_log.values()))
     x_plt = list(std_log.keys())
@@ -80,9 +90,12 @@ def plot_std(std_log, output_filename):
 
     fig.tight_layout()
     plt.savefig(output_filename)
+    if silent:
+        plt.close()
 
 
-def plot_eigenvalues(std_log, output_filename):
+
+def plot_eigenvalues(std_log, output_filename, silent=True):
     n_epochs = len(std_log.keys())
     test = torch.cat(list(std_log.values())).reshape(n_epochs, 2, 2)
     eig_log = {}
@@ -108,3 +121,6 @@ def plot_eigenvalues(std_log, output_filename):
     plt.suptitle('Eigen values plot', y=1.05, fontsize=16)
     plt.savefig(output_filename, bbox_inches="tight")
     plt.show()
+    if silent:
+        plt.close()
+

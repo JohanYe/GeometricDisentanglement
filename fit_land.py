@@ -1,7 +1,7 @@
 import torch
 import torchvision.datasets
 import model
-from utils import load_checkpoint, custom_dataset, print_stderr
+from utils import load_checkpoint, custom_dataset, print_stdout, make_dir
 import visualize
 import numpy as np
 import land
@@ -11,15 +11,19 @@ import time
 
 sns.set_style("darkgrid")
 model_folder = "./model/best_beta1/"
-model_name = 'best_beta1'
+model_name = 'init_1'
+make_dir(model_folder + model_name)
+save_dir = model_folder + model_name + "/"
+sampled = True
 load_land = False
 hpc = True
 fast_train = False
 debug_mode = False
 full_cov = True
 start_time = time.time()
+torch.manual_seed(0)
 
-batch_size = 256 if hpc else 64
+batch_size = 512 if hpc else 64
 layers = torch.linspace(28 ** 2, 2, 3).int()
 num_components = 50
 label_thresh = 4  # include only a subset of MNIST classes
@@ -53,7 +57,11 @@ with torch.no_grad():
     minz -= alpha  # d
     maxz += alpha
     z_data = torch.utils.data.TensorDataset(z)
-    train_loader = torch.utils.data.DataLoader(z_data, batch_size=batch_size, shuffle=True)
+    N_train = int(0.9 * len(z_data))
+    N_test = len(z_data) - int(0.9 * len(z_data))
+    train_set, test_set = torch.utils.data.random_split(z_data, [N_train, N_test])
+    train_loader = torch.utils.data.DataLoader(train_set, batch_size=batch_size, shuffle=True)
+    test_loader = torch.utils.data.DataLoader(test_set, batch_size=batch_size, shuffle=True)
 
 if load_land:
     mu = torch.Tensor(np.load(model_folder + 'land_mu.npy')).to(device).requires_grad_(True)
@@ -67,32 +75,92 @@ else:  # manual init
         std = torch.tensor([40.]).to(device).float().requires_grad_(True)
 
 # meshgrid creating
-meshsize = 40
+meshsize = 100 if sampled else 20
 ran0 = torch.linspace(minz[0].item(), maxz[0].item(), meshsize)
 ran1 = torch.linspace(minz[1].item(), maxz[1].item(), meshsize)
 Mx, My = torch.meshgrid(ran0, ran1)
 Mxy = torch.cat((Mx.t().reshape(-1, 1), My.t().reshape(-1, 1)), dim=1)  # (meshsize^2)x2
 Mxy.requires_grad = False
 dv = (ran0[-1] - ran0[0]) * (ran1[-1] - ran1[0]) / (meshsize ** 2)
-iters = (Mxy.shape[0] // batch_size) + 1
 curves = {}
 
-optimizer_mu = torch.optim.Adam([mu], lr=1e-3, weight_decay=1e-3)
+if sampled:
+    with torch.no_grad():
+        grid_prob, grid_metric, grid_metric_sum = land.LAND_grid_prob(grid=Mxy,
+                                                                      model=net,
+                                                                      batch_size=1024,
+                                                                      device=device)
+        grid = Mxy.clone()
+else:
+    grid_metric_sum = None
+
+
+optimizer_mu = torch.optim.Adam([mu], lr=1e-3)
 lpzs_log, mu_log, constant_log, distance_log = {}, {}, {}, {}
-optimizer_std = torch.optim.Adam([std], lr=5e-4)
-lpzs_log_std, std_log, constant_log_std, distance_log_std = {}, {}, {}, {}
-n_epochs = 2 if debug_mode else 10
+optimizer_std = torch.optim.Adam([std], lr=3e-4)
+std_log, lpz_std_log = {}, {}
+test_lpz_log = {}
+n_epochs = 2 if debug_mode else 5
 total_epochs = 0
+early_stopping_counter = 0
+best_nll = np.inf
 
 net.eval()
 for j in range(20):
-    if j != 0:
-        for epoch in range(total_epochs + 1,total_epochs +  n_epochs + 1):
-            total_epochs += 1
-            Cs, mus, lpzs, constants, distances = [], [], [], [], []
-            for idx, batch in enumerate(tqdm(train_loader)):
-                optimizer_mu.zero_grad()
-                optimizer_std.zero_grad()
+    for epoch in range(total_epochs + 1, total_epochs + n_epochs + 1):
+        total_epochs += 1
+        Cs, mus, stds, lpzs, constants, distances = [], [], [], [], [], []
+        for idx, batch in enumerate(tqdm(train_loader)):
+            optimizer_mu.zero_grad()
+            optimizer_std.zero_grad()
+
+            if sampled:
+                idxs = torch.multinomial(grid_prob, num_samples=batch_size, replacement=False)
+                Mxy_batch = Mxy[idxs].to(device)
+            else:
+                Mxy_batch = None
+
+            # data
+            lpz, init_curve, dist2, constant = land.land_auto(loc=mu,
+                                                              scale=std,
+                                                              z_points=batch[0].to(device),
+                                                              dv=dv,
+                                                              grid=Mxy,
+                                                              model=net,
+                                                              constant=None,
+                                                              batch_size=batch_size,
+                                                              grid_sum=grid_metric_sum,
+                                                              grid_batch=Mxy_batch)
+            lpz.mean().backward()
+            if j % 2 == 0:
+                optimizer_mu.step()
+            else:
+                optimizer_std.step()
+
+            mus.append(mu.cpu().detach())
+            lpzs.append(lpz.cpu())
+            stds.append(std.cpu().detach().unsqueeze(0))
+            constants.append(constant.unsqueeze(0).cpu().detach())
+            distances.append(dist2.sqrt().sum().unsqueeze(0).cpu().detach())
+
+            if debug_mode and idx == 2:
+                break
+
+        std_log[epoch] = std.detach().cpu()
+        lpzs_log[epoch] = torch.cat(lpzs).mean().item()
+        mu_log[epoch] = torch.cat(mus).mean(0)
+        constant_log[epoch] = torch.cat(constants, dim=0).mean()
+        distance_log[epoch] = torch.cat(distances, dim=0).mean()
+
+        with torch.no_grad():
+            lpzs_test = []
+            for idx, batch in enumerate(tqdm(test_loader)):
+                if sampled:
+                    idxs = torch.multinomial(grid_prob, num_samples=batch_size, replacement=False)
+                    Mxy_batch = Mxy[idxs].to(device)
+                else:
+                    Mxy_batch = None
+
                 # data
                 lpz, init_curve, dist2, constant = land.land_auto(loc=mu,
                                                                   scale=std,
@@ -101,88 +169,49 @@ for j in range(20):
                                                                   grid=Mxy,
                                                                   model=net,
                                                                   constant=None,
-                                                                  batch_size=batch_size)
-                lpz.mean().backward()
-                optimizer_mu.step()
+                                                                  batch_size=batch_size,
+                                                                  grid_sum=grid_metric_sum,
+                                                                  grid_batch=Mxy_batch)
+                lpzs_test.append(lpz)
+        test_lpz_log[epoch] = torch.cat(lpzs_test).mean().item()
+        lpz_std_log[epoch] = torch.cat(lpzs).std().item()
 
-                mus.append(mu.cpu().detach())
-                lpzs.append(lpz.cpu())
-                constants.append(constant.unsqueeze(0).cpu().detach())
-                distances.append(dist2.sqrt().sum().unsqueeze(0).cpu().detach())
+        print_stdout('Epoch: {}, P(z) train: {:.4f}, P(z) test: {:.4f} \
+        , mu: [{:.4f},{:.4f}], std: {}'.format(epoch,
+                                               torch.cat(lpzs).mean().item(),
+                                               torch.cat(lpzs_test).mean().item(),
 
-                if debug_mode and idx == 2:
-                    break
-            std_log[epoch] = std.detach().cpu()
-            lpzs_log[epoch] = torch.cat(lpzs).mean().item()
-            mu_log[epoch] = torch.cat(mus).mean(0)
-            constant_log[epoch] = torch.cat(constants, dim=0).mean()
-            distance_log[epoch] = torch.cat(distances, dim=0).mean()
-
-            print_stderr('Epoch: {}, P(z): {:.4f}, mu: [{:.4f},{:.4f}], std: {}'.format(epoch,
-                                                                                        torch.cat(lpzs).mean().item(),
-                                                                                        torch.cat(mus).mean(dim=0)[0].item(),
-                                                                                        torch.cat(mus).mean(dim=0)[1].item(),
-                                                                                        np.round(std.data.tolist(), 4)))
-
-        visualize.plot_training_curves(nll_log=lpzs_log,
-                                       constant_log=constant_log,
-                                       distance_log=distance_log,
-                                       output_filename=model_folder + model_name + 'land_mu_training_curve' + str(j) + '.pdf')
-        visualize.plot_mu_curve(mu_log, output_filename=model_folder + model_name + 'land_mu_plot' + str(j) + '.pdf')
-
-    net.eval()
-    for epoch in range(total_epochs + 1, total_epochs + 2*n_epochs + 1):
-        total_epochs += 1
-        Cs, stds, lpzs, constants, distances = [], [], [], [], []
-        for idx, batch in enumerate(tqdm(train_loader)):
-            optimizer_std.zero_grad()
-            optimizer_mu.zero_grad()
-            # data
-            lpz, init_curve, dist2, constant = land.land_auto(loc=mu,
-                                                              scale=std,
-                                                              z_points=batch[0].to(device),
-                                                              dv=dv,
-                                                              constant=None,
-                                                              grid=Mxy,
-                                                              model=net,
-                                                              batch_size=batch_size//2)
-            lpz.mean().backward()
-            optimizer_std.step()
-
-            stds.append(std.cpu().detach().unsqueeze(0))
-            lpzs.append(lpz.cpu())
-            constants.append(constant.unsqueeze(0).cpu().detach())
-            distances.append(dist2.sqrt().sum().unsqueeze(0).cpu().detach())
-
-            if debug_mode and idx == 2:
+                                               torch.cat(mus).mean(dim=0)[0].item(),
+                                               torch.cat(mus).mean(dim=0)[1].item(),
+                                               np.round(std.data.tolist(), 4)))
+        if epoch > 1:
+            if (test_lpz_log[epoch-1] - 0.1*lpz_std_log[epoch]) < test_lpz_log[epoch] < (test_lpz_log[epoch-1] + 0.1*lpz_std_log[epoch]):
+                early_stopping_counter += 1
+            else:
+                early_stopping_counter = 0
+            if early_stopping_counter >= 5:
                 break
 
-        mu_log[epoch] = mu.detach().cpu().squeeze(0)
-        lpzs_log_std[epoch] = torch.cat(lpzs).mean().item()
-        std_log[epoch] = torch.cat(stds).mean(0).squeeze(0)
-        constant_log_std[epoch] = torch.cat(constants, dim=0).mean()
-        distance_log_std[epoch] = torch.cat(distances, dim=0).mean()
+        if test_lpz_log[epoch] < best_nll:
+            best_nll = test_lpz_log[epoch]
+            best_mu = mu.clone().detach()
+            best_std = std.clone().detach()
 
-        if (time.time() - start_time) > 84600:
-            break
 
-        print_stderr('Epoch: {}, P(z): {:.4f}, mu: [{:.4f},{:.4f}], std: {}'.format(epoch,
-                                                                                    torch.cat(lpzs).mean().item(),
-                                                                                    mu[0][0].item(),
-                                                                                    mu[0][1].item(),
-                                                                                    np.round(std.data.tolist(), 4)))
 
-    visualize.plot_training_curves(nll_log=lpzs_log_std,
-                                   constant_log=constant_log_std,
-                                   distance_log=distance_log_std,
-                                   output_filename=model_folder + model_name + 'land_std_training_curve' + str(j) + '.pdf')
+    visualize.plot_training_curves(nll_log=lpzs_log,
+                                   constant_log=constant_log,
+                                   distance_log=distance_log,
+                                   output_filename=save_dir + 'land_mu_training_curve.pdf')
+    visualize.plot_mu_curve(mu_log, output_filename=save_dir + 'land_mu_plot.pdf')
     if std.dim() == 1:
-        visualize.plot_std(std_log, output_filename=model_folder + model_name + 'land_std_plot' + str(j) + '.pdf')
+        visualize.plot_std(std_log, output_filename=save_dir + 'land_std_plot.pdf')
     else:
-        visualize.plot_covariance(std_log, output_filename=model_folder + model_name + 'land_cov_plot' + str(j) + '.pdf')
-        visualize.plot_eigenvalues(std_log, output_filename=model_folder + model_name + 'eigenvalues_plot.pdf')
+        visualize.plot_covariance(std_log,
+                                  output_filename=save_dir + 'land_cov_plot.pdf')
+        visualize.plot_eigenvalues(std_log, output_filename=save_dir + 'eigenvalues_plot.pdf')
 
-mu_save = mu.cpu().detach().numpy()
-std_save = std.cpu().detach().numpy()
-np.save(model_folder + 'LAND_mu_' + model_name + '.npy', mu_save, allow_pickle=True)
-np.save(model_folder + 'LAND_std_' + model_name + '.npy', std_save, allow_pickle=True)
+mu_save = best_mu.cpu().detach().numpy()
+std_save = best_std.cpu().detach().numpy()
+np.save(save_dir + 'LAND_mu_.npy', mu_save, allow_pickle=True)
+np.save(save_dir + 'LAND_std_.npy', std_save, allow_pickle=True)
