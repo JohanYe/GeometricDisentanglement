@@ -16,7 +16,7 @@ make_dir(model_folder + model_name)
 save_dir = model_folder + model_name + "/"
 sampled = True
 load_land = False
-hpc = True
+hpc = False
 fast_train = False
 debug_mode = False
 full_cov = True
@@ -68,9 +68,9 @@ if load_land:
     std = torch.Tensor(np.load(model_folder + 'land_std.npy')).to(device).requires_grad_(True)
 else:  # manual init
     mu_np = np.expand_dims(np.array([0, 0]), axis=0)
-    mu = torch.tensor(mu_np).to(device).float().requires_grad_(True)
+    mu = torch.tensor(mu_np).to(device).double().requires_grad_(True)
     if full_cov:
-        std = torch.tensor([[1/100, 1/50], [1/50, 1/100]]).to(device).float().requires_grad_(True)
+        std = torch.tensor(np.random.uniform(-1, 1, size=(2, 2)) / 50).to(device).double().requires_grad_(True)
     else:
         std = torch.tensor([40.]).to(device).float().requires_grad_(True)
 
@@ -123,14 +123,14 @@ for j in range(20):
             # data
             lpz, init_curve, dist2, constant = land.land_auto(loc=mu,
                                                               scale=std,
-                                                              z_points=batch[0].to(device),
-                                                              dv=dv,
-                                                              grid=Mxy,
-                                                              model=net,
+                                                              z_points=batch[0].double().to(device),
+                                                              dv=dv.double(),
+                                                              grid=Mxy.double(),
+                                                              model=net.double(),
                                                               constant=None,
                                                               batch_size=batch_size,
                                                               grid_sum=grid_metric_sum,
-                                                              grid_batch=Mxy_batch)
+                                                              grid_batch=Mxy_batch.double())
             lpz.mean().backward()
             if j % 2 == 0:
                 optimizer_mu.step()
