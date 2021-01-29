@@ -401,12 +401,12 @@ class Manifold(ABC):
                         is the geodesic distance from p0 to p1.
         """
         if curve is None:
-            curve = self.connecting_geodesic(p0, p1, init_curve=None)
+            curve = self.connecting_geodesic(p0, p1, init_curve=None)[0]
         if curve is not None and optimize:
-            curve = self.connecting_geodesic(p0, p1, init_curve=curve)
+            curve = self.connecting_geodesic(p0, p1, init_curve=curve)[0]
         with torch.no_grad():
             lm = curve.deriv(torch.zeros(1))
-        return lm
+        return lm, curve, curve.end
 
     def expmap(self, p, v, t=torch.linspace(0, 1, 5)):
         """
