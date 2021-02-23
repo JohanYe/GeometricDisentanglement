@@ -511,7 +511,7 @@ class RBF(nn.Module):
     def __dist2__(self, x):
         x_norm = (x**2).sum(1).view(-1, 1)  # [batch, 1]
         points_norm = (self.points**2).sum(1).view(1, -1).to(self.device)
-        d2 = x_norm + points_norm - 2.0 * torch.mm(x, self.points.transpose(0, 1))  #x^2 + mu^2 + 2*x*mu
+        d2 = x_norm + points_norm - 2.0 * torch.mm(x, self.points.transpose(0, 1))  #x^2 + mu^2 - 2*x*mu
         return d2.clamp(min=0.0) # NxM
         #if x.dim() is 2:
         #    x = x.unsqueeze(0) # BxNxD
