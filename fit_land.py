@@ -8,57 +8,59 @@ import land
 import seaborn as sns
 from tqdm import tqdm
 import time
+import experiment_setup
+import os
+from os.path import join as join_path
+import re
+import data
 
 sns.set_style("darkgrid")
-model_folder = "./model/mnist2-3/"
-model_name = 'init_3_sampled'
-print(model_folder + model_name)
-make_dir(model_folder + model_name)
-save_dir = model_folder + model_name + "/"
-sampled = True
-load_land = False
-hpc = True
-fast_train = False
-debug_mode = False
-full_cov = True
+experiment_parameters = {
+    "model_dir": "./model/mnist1-2",
+    "dataset": "mnist1",
+    "exp_name": "init_1_sampled",
+    "sampled": True,
+    "load_land": False,
+    "debug_mode": False,
+    "hpc": False,
+}
+
+experiment_parameters = experiment_setup.parse_args(experiment_parameters)
+save_dir = join_path(experiment_parameters["model_dir"], experiment_parameters["exp_name"])
+print(experiment_parameters["model_dir"] + experiment_parameters["exp_name"])
+make_dir(save_dir)  # will only create new if it doesn't exist
 start_time = time.time()
 torch.manual_seed(0)
 
-batch_size = 512 if hpc else 64
+batch_size = 512 if experiment_parameters["hpc"] else 64
 layers = torch.linspace(28 ** 2, 2, 3).int()
 num_components = 50
 label_thresh = 4  # include only a subset of MNIST classes
 device = torch.device('cuda:0') if torch.cuda.is_available() else torch.device('cpu')
 
 ## Data
-mnist_train = torchvision.datasets.MNIST('data/', train=True, download=True)
-x_train = mnist_train.data.reshape(-1, 784).float() / 255
-y_train = mnist_train.targets
-if "0" in model_folder:
-    label_thresh = 2  # include only a subset of MNIST classes
-    idx = y_train < label_thresh  # only use digits 0, 1, 2, ...
-    print("samples:", idx.sum())
-elif "vae" in model_folder:
-    label_thresh = 4  # include only a subset of MNIST classes
-    idx = y_train < label_thresh  # only use digits 0, 1, 2, ...
-    print("samples:", idx.sum())
-elif "mnist2" in model_folder:
-    label_thresh = 2  # include only a subset of MNIST classes
-    idx = y_train == label_thresh  # only use digits 0, 1, 2, ...
-    print("samples:", idx.sum())
-else:
-    label_thresh = 1  # include only a subset of MNIST classes
-    idx = y_train == label_thresh  # only use digits 0, 1, 2, ...
-    print("samples:", idx.sum())
-num_classes = y_train[idx].unique().numel()
-x_train = x_train[idx]
-y_train = y_train[idx]
-N = x_train.shape[0]
+if "outlier" in experiment_parameters["dataset"] or "augment" in experiment_parameters["dataset"]:
+    data_path = join_path("./data", experiment_parameters["dataset"])
+    x_train, y_train, N = data.load_mnist_augment(data_path)
+    print("data samples loaded", N)
+
+exp_regex = (re.findall(r"([a-zA-Z ]*)(\d*)", experiment_parameters["dataset"]))
+if exp_regex[0].lower() == "mnist":
+    one_digit = True if len(exp_regex[1]) == 1 else False
+    x_train, y_train, N = data.load_mnist_train(root="./data", label_threshold=exp_regex[1], one_digit=one_digit)
+elif exp_regex[0].lower() == "bodies":
+    data_path = join_path("./data", exp_regex[0].lower())
+    x_train, y_train, N = data.load_bodies(data_path)
 
 # load model
-net = model.VAE(x_train, layers, num_components=num_components, device=device)
-ckpt = load_checkpoint(model_folder + 'best.pth.tar', net)
-net.init_std(x_train, gmm_mu=ckpt['gmm_means'], gmm_cv=ckpt['gmm_cv'], weights=ckpt['weights'])
+checkpoint = join_path(experiment_parameters["model_dir"],'best.pth.tar')
+if not os.path.exists(checkpoint):
+    raise Exception("File {} dosen't exists!".format(checkpoint))
+ckpt = torch.load(checkpoint, map_location=device)
+saved_dict = ckpt['state_dict']
+net = model.VAE_bodies(x_train, ckpt['layers'], num_components=ckpt['num_components'], device=device)
+net.init_std(torch.Tensor(x_train), gmm_mu=ckpt['gmm_means'], gmm_cv=ckpt['gmm_cv'], weights=ckpt['weights'],
+             inv_maxstd=ckpt['inv_maxstd'], beta_constant=ckpt['beta_constant'])
 saved_dict = ckpt['state_dict']
 new_dict = net.state_dict()
 new_dict.update(saved_dict)
@@ -79,19 +81,16 @@ with torch.no_grad():
     train_loader = torch.utils.data.DataLoader(train_set, batch_size=batch_size, shuffle=True)
     test_loader = torch.utils.data.DataLoader(test_set, batch_size=batch_size, shuffle=True)
 
-if load_land:
-    mu = torch.Tensor(np.load(model_folder + 'land_mu.npy')).to(device).requires_grad_(True)
-    std = torch.Tensor(np.load(model_folder + 'land_std.npy')).to(device).requires_grad_(True)
+if experiment_parameters["load_land"]:
+    mu = torch.Tensor(np.load(join_path(experiment_parameters["model_dir"],'land_mu.npy'))).to(device).requires_grad_(True)
+    std = torch.Tensor(np.load(join_path(experiment_parameters["model_dir"],'land_std.npy'))).to(device).requires_grad_(True)
 else:  # manual init
     mu_np = np.expand_dims(np.array([0, 0]), axis=0)
     mu = torch.tensor(mu_np).to(device).float().requires_grad_(True)
-    if full_cov:
-        std = torch.Tensor(np.random.uniform(-1, 1, size=(2, 2)) / 100).to(device).float().requires_grad_(True)
-    else:
-        std = torch.tensor([40.]).to(device).float().requires_grad_(True)
+    std = torch.Tensor(np.random.uniform(-1, 1, size=(2, 2)) / 100).to(device).float().requires_grad_(True)
 
 # meshgrid creating
-meshsize = 100 if sampled else 20
+meshsize = 100 if experiment_parameters["sampled"] else 20
 ran0 = torch.linspace(minz[0].item(), maxz[0].item(), meshsize)
 ran1 = torch.linspace(minz[1].item(), maxz[1].item(), meshsize)
 Mx, My = torch.meshgrid(ran0, ran1)
@@ -100,7 +99,7 @@ Mxy.requires_grad = False
 dv = (ran0[-1] - ran0[0]) * (ran1[-1] - ran1[0]) / (meshsize ** 2)
 curves = {}
 
-if sampled:
+if experiment_parameters["sampled"]:
     with torch.no_grad():
         grid_prob, grid_metric, grid_metric_sum = land.LAND_grid_prob(grid=Mxy,
                                                                       model=net,
@@ -115,7 +114,7 @@ lpzs_log, mu_log, constant_log, distance_log = {}, {}, {}, {}
 optimizer_std = torch.optim.Adam([std], lr=5e-4)  # , weight_decay=1e-4)
 std_log, lpz_std_log = {}, {}
 test_lpz_log = {}
-n_epochs = 2 if debug_mode else 5
+n_epochs = 2 if experiment_parameters["debug_mode"] else 5
 total_epochs = 0
 early_stopping_counter = 0
 best_nll = np.inf
@@ -130,7 +129,7 @@ for j in range(40):
             optimizer_mu.zero_grad()
             optimizer_std.zero_grad()
 
-            if sampled:
+            if experiment_parameters["sampled"]:
                 idxs = torch.multinomial(grid_prob, num_samples=batch_size, replacement=False)
                 Mxy_batch = Mxy[idxs].to(device)
             else:
@@ -159,7 +158,7 @@ for j in range(40):
             constants.append(constant.unsqueeze(0).cpu().detach())
             distances.append(dist2.sqrt().sum().unsqueeze(0).cpu().detach())
 
-            if debug_mode and idx == 2:
+            if experiment_parameters["debug_mode"] and idx == 2:
                 break
 
         std_log[epoch] = std.detach().cpu()
@@ -171,7 +170,7 @@ for j in range(40):
         with torch.no_grad():
             lpzs_test = []
             for idx, batch in enumerate(tqdm(test_loader)):
-                if sampled:
+                if experiment_parameters["sampled"]:
                     idxs = torch.multinomial(grid_prob, num_samples=batch_size, replacement=False)
                     Mxy_batch = Mxy[idxs].to(device)
                 else:
