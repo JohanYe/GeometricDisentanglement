@@ -10,13 +10,14 @@ from tqdm import tqdm
 import time
 
 sns.set_style("darkgrid")
-model_folder = "./model/best_beta1/"
-model_name = 'init_1'
+model_folder = "./model/mnist2-3/"
+model_name = 'init_3_sampled'
+print(model_folder + model_name)
 make_dir(model_folder + model_name)
 save_dir = model_folder + model_name + "/"
 sampled = True
 load_land = False
-hpc = False
+hpc = True
 fast_train = False
 debug_mode = False
 full_cov = True
@@ -33,7 +34,22 @@ device = torch.device('cuda:0') if torch.cuda.is_available() else torch.device('
 mnist_train = torchvision.datasets.MNIST('data/', train=True, download=True)
 x_train = mnist_train.data.reshape(-1, 784).float() / 255
 y_train = mnist_train.targets
-idx = y_train < label_thresh  # only use digits 0, 1, 2, ...
+if "0" in model_folder:
+    label_thresh = 2  # include only a subset of MNIST classes
+    idx = y_train < label_thresh  # only use digits 0, 1, 2, ...
+    print("samples:", idx.sum())
+elif "vae" in model_folder:
+    label_thresh = 4  # include only a subset of MNIST classes
+    idx = y_train < label_thresh  # only use digits 0, 1, 2, ...
+    print("samples:", idx.sum())
+elif "mnist2" in model_folder:
+    label_thresh = 2  # include only a subset of MNIST classes
+    idx = y_train == label_thresh  # only use digits 0, 1, 2, ...
+    print("samples:", idx.sum())
+else:
+    label_thresh = 1  # include only a subset of MNIST classes
+    idx = y_train == label_thresh  # only use digits 0, 1, 2, ...
+    print("samples:", idx.sum())
 num_classes = y_train[idx].unique().numel()
 x_train = x_train[idx]
 y_train = y_train[idx]
@@ -68,9 +84,9 @@ if load_land:
     std = torch.Tensor(np.load(model_folder + 'land_std.npy')).to(device).requires_grad_(True)
 else:  # manual init
     mu_np = np.expand_dims(np.array([0, 0]), axis=0)
-    mu = torch.tensor(mu_np).to(device).double().requires_grad_(True)
+    mu = torch.tensor(mu_np).to(device).float().requires_grad_(True)
     if full_cov:
-        std = torch.tensor(np.random.uniform(-1, 1, size=(2, 2)) / 50).to(device).double().requires_grad_(True)
+        std = torch.Tensor(np.random.uniform(-1, 1, size=(2, 2)) / 100).to(device).float().requires_grad_(True)
     else:
         std = torch.tensor([40.]).to(device).float().requires_grad_(True)
 
@@ -94,10 +110,9 @@ if sampled:
 else:
     grid_metric_sum = None
 
-
-optimizer_mu = torch.optim.Adam([mu], lr=1e-3)
+optimizer_mu = torch.optim.Adam([mu], lr=1e-3)  # , weight_decay=1e-4)
 lpzs_log, mu_log, constant_log, distance_log = {}, {}, {}, {}
-optimizer_std = torch.optim.Adam([std], lr=3e-4)
+optimizer_std = torch.optim.Adam([std], lr=5e-4)  # , weight_decay=1e-4)
 std_log, lpz_std_log = {}, {}
 test_lpz_log = {}
 n_epochs = 2 if debug_mode else 5
@@ -106,7 +121,8 @@ early_stopping_counter = 0
 best_nll = np.inf
 
 net.eval()
-for j in range(20):
+net = net
+for j in range(40):
     for epoch in range(total_epochs + 1, total_epochs + n_epochs + 1):
         total_epochs += 1
         Cs, mus, stds, lpzs, constants, distances = [], [], [], [], [], []
@@ -123,14 +139,14 @@ for j in range(20):
             # data
             lpz, init_curve, dist2, constant = land.land_auto(loc=mu,
                                                               scale=std,
-                                                              z_points=batch[0].double().to(device),
-                                                              dv=dv.double(),
-                                                              grid=Mxy.double(),
-                                                              model=net.double(),
+                                                              z_points=batch[0].to(device),
+                                                              dv=dv,
+                                                              grid=Mxy,
+                                                              model=net,
                                                               constant=None,
                                                               batch_size=batch_size,
                                                               grid_sum=grid_metric_sum,
-                                                              grid_batch=Mxy_batch.double())
+                                                              grid_batch=Mxy_batch)
             lpz.mean().backward()
             if j % 2 == 0:
                 optimizer_mu.step()
@@ -185,7 +201,8 @@ for j in range(20):
                                                torch.cat(mus).mean(dim=0)[1].item(),
                                                np.round(std.data.tolist(), 4)))
         if epoch > 1:
-            if (test_lpz_log[epoch-1] - 0.1*lpz_std_log[epoch]) < test_lpz_log[epoch] < (test_lpz_log[epoch-1] + 0.1*lpz_std_log[epoch]):
+            if (test_lpz_log[epoch - 1] - 0.2 * lpz_std_log[epoch]) < test_lpz_log[epoch] < (
+                    test_lpz_log[epoch - 1] + 0.2 * lpz_std_log[epoch]):
                 early_stopping_counter += 1
             else:
                 early_stopping_counter = 0
@@ -196,8 +213,6 @@ for j in range(20):
             best_nll = test_lpz_log[epoch]
             best_mu = mu.clone().detach()
             best_std = std.clone().detach()
-
-
 
     visualize.plot_training_curves(nll_log=lpzs_log,
                                    constant_log=constant_log,
