@@ -9,6 +9,7 @@ from torch.distributions.multivariate_normal import MultivariateNormal
 from .functions import Hyp1f1
 from scipy.special import gamma
 import numpy as np
+from tqdm import tqdm
 
 def sturm_mean(manifold, data, num_steps=None):
     """
@@ -23,17 +24,18 @@ def sturm_mean(manifold, data, num_steps=None):
     num_steps=N:    number of steps taken by the algorithm. By default
                     one pass is taken through the entire data set.
     """
+    device = data.device
     if num_steps is None:
         num_steps = data.shape[0]
     N, D = data.shape
     idx = torch.randint(high=N, size=(num_steps,), dtype=torch.long)
     mu = data[idx[0]]
     n = 1.0
-    for m in range(1, num_steps):
+    for m in tqdm(range(1, num_steps)):
         c, success = manifold.connecting_geodesic(mu.view(1, -1), data[idx[m]].view(1, -1))
         if success:
             n += 1.0
-            alpha = torch.tensor(n).reciprocal()
+            alpha = torch.tensor(n).reciprocal().to(device)
             mu = c(alpha).detach()
     return mu.flatten()
 
