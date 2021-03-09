@@ -150,19 +150,24 @@ def LAND_fullcov_sampled(loc, A, z_points, dv, sampled_grid_points, metric_sum, 
 
 
 def LAND_grid_prob(grid, model, batch_size=1024, device="cuda"):
-    iters = (grid.shape[0] // batch_size) + 1
+    tmp = (grid.shape[0] // batch_size)
+    iters = tmp + 1 if grid.shape[0] / batch_size > tmp else tmp
     model.eval()
     with torch.no_grad():
         for i in range(iters):
-            z = grid[i*batch_size:(i+1)*batch_size, :] if i < (iters-1) else grid[i*batch_size:,:]
+            z = grid[i * batch_size:(i + 1) * batch_size, :] if i < (iters - 1) else grid[i * batch_size:, :]
+            metric_determinant = model.metric(z.to(device)).det()
 
             if i == 0:  # for metric
-                grid_metric = model.metric(z.to(device)).det().sqrt().cpu()
+                grid_save = metric_determinant
             else:
-                grid_metric = torch.cat((grid_metric, model.metric(z.to(device)).det().sqrt().cpu()), dim=0)
+                grid_save = torch.cat((grid_save, metric_determinant), dim=0)
 
+    print("negative grid metric:", grid_save[grid_save < 0].shape[0])
+    grid_save[grid_save < 0] = model.metric(grid[grid_save < 0].to(device)).det()
+    grid_metric = grid_save.sqrt()
     grid_prob = grid_metric / grid_metric.sum()
-    return grid_prob, grid_metric, grid_metric.sum()
+    return grid_prob.cpu(), grid_metric.cpu(), grid_metric.sum().cpu(), grid_save
 
 
 def LAND_scalar_variance(loc, scale, z_points, grid_points, dv, constant=None, model=None, logspace=True,

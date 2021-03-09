@@ -9,6 +9,7 @@ import seaborn as sns
 from tqdm import tqdm
 import time
 import experiment_setup
+import utils
 import os
 from os.path import join as join_path
 import re
@@ -16,8 +17,8 @@ import data
 
 sns.set_style("darkgrid")
 experiment_parameters = {
-    "model_dir": "mnist1-2",
-    "dataset": "mnist1",
+    "model_dir": "bodies64-4",
+    "dataset": "bodies",
     "exp_name": "init_1_sampled",
     "sampled": True,
     "load_land": False,
@@ -54,20 +55,7 @@ else:
     x_train, y_train, N = data.load_mnist_train(root="./data", label_threshold=exp_regex[1], one_digit=one_digit)
 
 # load model
-checkpoint = join_path(model_dir, 'best.pth.tar')
-if not os.path.exists(checkpoint):
-    raise Exception("File {} dosen't exists!".format(checkpoint))
-ckpt = torch.load(checkpoint, map_location=device)
-saved_dict = ckpt['state_dict']
-beta = ckpt.get("beta_override")
-net = model.VAE_bodies(x_train, ckpt['layers'], num_components=ckpt['num_components'], device=device)
-net.init_std(torch.Tensor(x_train), gmm_mu=ckpt['gmm_means'], gmm_cv=ckpt['gmm_cv'], weights=ckpt['weights'],
-             inv_maxstd=ckpt['inv_maxstd'], beta_constant=ckpt['beta_constant'], beta_override=beta)
-saved_dict = ckpt['state_dict']
-new_dict = net.state_dict()
-new_dict.update(saved_dict)
-net.load_state_dict(new_dict)
-net.eval()
+net = utils.load_model(model_dir, x_train)
 
 with torch.no_grad():
     z = torch.chunk(net.encoder(x_train.to(device)), chunks=2, dim=-1)[0].cpu()  # [0] = mus
@@ -101,16 +89,33 @@ Mxy.requires_grad = False
 dv = (ran0[-1] - ran0[0]) * (ran1[-1] - ran1[0]) / (meshsize ** 2)
 curves = {}
 
+# meshgrid creating
+meshsize = 100 if experiment_parameters["sampled"] else 20
+ran0 = torch.linspace(minz[0].item(), maxz[0].item(), meshsize)
+ran1 = torch.linspace(minz[1].item(), maxz[1].item(), meshsize)
+Mx, My = torch.meshgrid(ran0, ran1)
+Mxy = torch.cat((Mx.t().reshape(-1, 1), My.t().reshape(-1, 1)), dim=1)  # (meshsize^2)x2
+Mxy.requires_grad = False
+dv = (ran0[-1] - ran0[0]) * (ran1[-1] - ran1[0]) / (meshsize ** 2)
+curves = {}
+
 if experiment_parameters["sampled"]:
     with torch.no_grad():
-        grid_prob, grid_metric, grid_metric_sum = land.LAND_grid_prob(grid=Mxy,
-                                                                      model=net,
-                                                                      batch_size=1024,
-                                                                      device=device)
+        grid_prob, grid_metric, grid_metric_sum, grid_save = land.LAND_grid_prob(grid=Mxy,
+                                                                                 model=net,
+                                                                                 batch_size=1,
+                                                                                 device=device)
+        # really hacky solution
+        n_faulty_grid_spots = grid_save[grid_save < 0].shape[0]
+        if 0 < n_faulty_grid_spots < 5:
+            grid_save[grid_save < 0] = 0
+            grid_metric = grid_save.sqrt()
+            grid_prob = grid_metric / grid_metric.sum()
+            grid_metric_sum = grid_metric.sum()
+
         grid = Mxy.clone()
 else:
     grid_metric_sum = None
-
 if experiment_parameters["mu_init_eval"] and not experiment_parameters["load_land"]:
     mus, average_loglik = [], []
     for i in range(10):
@@ -255,9 +260,9 @@ for j in range(40):
             best_std = std.clone().detach()
 
     visualize.plot_training_curves(nll_log=lpzs_log,
-                                   constant_log=constant_log,
-                                   distance_log=distance_log,
-                                   output_filename=save_dir + 'land_mu_training_curve.pdf')
+                                   test_nll_log=test_lpz_log,
+                                   output_filename=save_dir + 'land_mu_training_curve.pdf',
+                                   silent=False)
     visualize.plot_mu_curve(mu_log, output_filename=save_dir + 'land_mu_plot.pdf')
     if std.dim() == 1:
         visualize.plot_std(std_log, output_filename=save_dir + 'land_std_plot.pdf')

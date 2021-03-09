@@ -52,6 +52,27 @@ def plot_mu_curve(mu_log, output_filename, silent=True):
         plt.close()
 
 
+def plot_training_curves(nll_log, test_nll_log, output_filename, silent=True):
+    """ Plot training curve and dist + constant progression """
+    fig, ax = plt.subplots(figsize=(7, 7))
+
+    x_plt = list(nll_log.keys())
+    y_train_plt = list(nll_log.values())
+    y_test_plt = list(test_nll_log.values())
+    ax.set_title('Loss Curve')
+    ax.set_ylabel('$-log(p(z|\mu, p))$')
+    ax.set_xlabel('Epoch')
+    ax.plot(x_plt, y_train_plt, label='Training loss')
+    ax.plot(x_plt, y_test_plt, label='Test loss')
+    ax.ticklabel_format(useOffset=False)
+    ax.legend(loc="best")
+
+    fig.tight_layout()
+    plt.savefig(output_filename, bbox_inches="tight")
+    plt.show()
+    if silent:
+        plt.close()
+
 
 def plot_covariance(std_log, output_filename, silent=True):
     fig, ax = plt.subplots(2, 2, figsize=(10, 5))
@@ -77,7 +98,6 @@ def plot_covariance(std_log, output_filename, silent=True):
         plt.close()
 
 
-
 def plot_std(std_log, output_filename, silent=True):
     fig, ax = plt.subplots(1, 1, figsize=(5, 5))
     std_stack = np.stack(list(std_log.values()))
@@ -92,7 +112,6 @@ def plot_std(std_log, output_filename, silent=True):
     plt.savefig(output_filename)
     if silent:
         plt.close()
-
 
 
 def plot_eigenvalues(std_log, output_filename, silent=True):
@@ -123,4 +142,3 @@ def plot_eigenvalues(std_log, output_filename, silent=True):
     plt.show()
     if silent:
         plt.close()
-
