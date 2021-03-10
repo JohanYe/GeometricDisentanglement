@@ -244,8 +244,25 @@ class PosLinear(Linear):
         J, _ = self._jacobian(x, val) # (batch)x(out)x(in)
         Jseq, JseqType = __jac_mul_generic__(J, Jseq, JseqType)
         return Jseq, JseqType
+    
 
+class Clamp(nn.Module):
+    def __init__(self):
+        super(Clamp, self).__init__()
 
+    def forward(self, x):
+        x = torch.clamp(x,min=0.02)
+        return x
+    
+class ClampLayer(ActivationJacobian, Clamp):
+    """ class to print layer inside sequentials"""
+    def __init__(self, *args, **kwargs):
+        ActivationJacobian.__abstract_init__(self, Clamp *args, **kwargs)
+
+    def _jacobian(self, x, val):
+        J = (val > 0.02).type(val.dtype) # XXX: can we avoid the type cast (it's expensive) ?
+        return J, JacType.DIAG
+    
 class ReLU(ActivationJacobian, nn.ReLU):
     def __init__(self, *args, **kwargs):
         ActivationJacobian.__abstract_init__(self, nn.ReLU, *args, **kwargs)
@@ -419,7 +436,7 @@ class ResidualBlock(nn.Module):
         super().__init__()
 
         # Are we given a sequence or should construct one?
-        if len(args) is 1 and isinstance(args[0], (nn.modules.container.Sequential, Sequential)):
+        if len(args) is 1 and isinstance(args[0], (modules.container.Sequential, Sequential)):
             self._F = args[0]
         else:
             self._F = Sequential(*args)
@@ -498,20 +515,20 @@ class Norm2(nn.Module):
 class RBF(nn.Module):
     def __init__(self, dim, num_points, points=None, beta=1.0):
         super().__init__()
-        self.device = torch.device('cuda:0') if torch.cuda.is_available() else torch.device('cpu')
+        self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         if points is None:
-            self.points = nn.Parameter(torch.randn(num_points, dim))  # random init
+            self.points = nn.Parameter(torch.randn(num_points, dim))
         else:
-            self.points = nn.Parameter(points,  requires_grad=False)
+            self.points = nn.Parameter(points, requires_grad=False)
         if isinstance(beta, torch.Tensor):
             self.beta = beta.view(1, -1).to(self.device)
         else:
             self.beta = beta.to(self.device)
 
     def __dist2__(self, x):
-        x_norm = (x**2).sum(1).view(-1, 1)  # [batch, 1]
-        points_norm = (self.points**2).sum(1).view(1, -1).to(self.device)
-        d2 = x_norm + points_norm - 2.0 * torch.mm(x, self.points.transpose(0, 1))  #x^2 + mu^2 - 2*x*mu
+        x_norm = (x**2).sum(1).view(-1, 1)
+        points_norm = (self.points**2).sum(1).view(1, -1)
+        d2 = x_norm + points_norm - 2.0 * torch.mm(x, self.points.transpose(0, 1))
         return d2.clamp(min=0.0) # NxM
         #if x.dim() is 2:
         #    x = x.unsqueeze(0) # BxNxD
@@ -536,6 +553,51 @@ class RBF(nn.Module):
         J = T1.unsqueeze(-1) * T2
         return J, JacType.FULL
 
+    def _jac_mul(self, x, val, Jseq, JseqType):
+        J, _ = self._jacobian(x, val) # (B)x(1)x(in) -- the current Jacobian
+        return __jac_mul_generic__(J, Jseq, JseqType)
+
+#temporary new version
+class RBF_variant(nn.Module):
+    def __init__(self, dim, num_points, points=None, beta=1.0, boxwidth=0.0):
+        super().__init__()
+        if points is None:
+            self.points = nn.Parameter(torch.randn(num_points, dim))
+        else:
+            self.points = nn.Parameter(points, requires_grad=False)
+        if isinstance(beta, torch.Tensor):
+            self.beta = beta.view(1, -1)
+        else:
+            self.beta = beta
+        if isinstance(boxwidth, torch.Tensor):
+            self.boxwidth = boxwidth.view(1, -1)
+        else:
+            self.boxwidth = boxwidth
+    def __dist2__(self, x):
+        x_norm = (x**2).sum(1).view(-1, 1)
+        points_norm = (self.points**2).sum(1).view(1, -1)
+        d2 = x_norm + points_norm - 2.0 * torch.mm(x, self.points.transpose(0, 1))
+        d2 -= self.boxwidth
+        return d2.clamp(min=0.0) # NxM
+        #if x.dim() is 2:
+        #    x = x.unsqueeze(0) # BxNxD
+        #x_norm = (x**2).sum(-1, keepdim=True) # BxNx1
+        #points_norm = (self.points**2).sum(-1, keepdim=True).view(1, 1, -1) # 1x1xM
+        #d2 = x_norm + points_norm - 2.0 * torch.bmm(x, self.points.t().unsqueeze(0).expand(x.shape[0], -1, -1))
+        #return d2.clamp(min=0.0) # BxNxM
+    def forward(self, x, jacobian=False):
+        D2 = self.__dist2__(x) # (batch)-by-|x|-by-|points|
+        val = torch.exp(-self.beta * D2) # (batch)-by-|x|-by-|points|
+        if jacobian:
+            J = self._jacobian(x, val)
+            return val, J
+        else:
+            return val
+    def _jacobian(self, x, val):
+        T1 = (-2.0 * self.beta * val) # BxNxM
+        T2 = (x.unsqueeze(1) - self.points.unsqueeze(0))
+        J = T1.unsqueeze(-1) * T2
+        return J, JacType.FULL
     def _jac_mul(self, x, val, Jseq, JseqType):
         J, _ = self._jacobian(x, val) # (B)x(1)x(in) -- the current Jacobian
         return __jac_mul_generic__(J, Jseq, JseqType)

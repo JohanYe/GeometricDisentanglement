@@ -80,26 +80,27 @@ def estimate_constant_full(mu, A, grid, dv, model, batch_size=512, sum=True):
     iters = (grid.shape[0] // batch_size) + 1
     device = torch.device('cuda:0') if torch.cuda.is_available() else torch.device('cpu')
 
-    for i in range(iters):
-        # data
-        grid_points_batch = grid[i * batch_size:(i + 1) * batch_size, :] if i < (iters - 1) else grid[
-                                                                                                 i * batch_size:, :]
-        mu_repeated = mu.repeat([grid_points_batch.shape[0], 1])
+    with torch.no_grad():
+        for i in range(iters):
+            # data
+            grid_points_batch = grid[i * batch_size:(i + 1) * batch_size, :] if i < (iters - 1) else grid[
+                                                                                                     i * batch_size:, :]
+            mu_repeated = mu.repeat([grid_points_batch.shape[0], 1])
 
-        # calcs
-        D2, _, _ = model.dist2_explicit(mu_repeated, grid_points_batch.to(device), A=A)
-        exponential_term = (-D2 / 2).squeeze(-1).exp()
-        metric_term = model.metric(grid_points_batch.to(device)).det().sqrt()
-        constant = metric_term * exponential_term * dv
+            # calcs
+            D2, _, _ = model.dist2_explicit(mu_repeated, grid_points_batch.to(device), A=A)
+            exponential_term = (-D2 / 2).squeeze(-1).exp()
+            metric_term = model.metric(grid_points_batch.to(device)).det().sqrt()
+            constant = metric_term * exponential_term * dv
 
-        if i == 0:
-            approx_constant = constant
-            if not sum:
-                metric_vector = metric_term.cpu()
-        else:
-            approx_constant = torch.cat((approx_constant, constant), dim=0)
-            if not sum:
-                metric_vector = torch.cat((metric_vector, constant.cpu()), dim=0)
+            if i == 0:
+                approx_constant = constant
+                if not sum:
+                    metric_vector = metric_term.cpu()
+            else:
+                approx_constant = torch.cat((approx_constant, constant), dim=0)
+                if not sum:
+                    metric_vector = torch.cat((metric_vector, constant.cpu()), dim=0)
     if sum:
         return approx_constant.sum()
     else:

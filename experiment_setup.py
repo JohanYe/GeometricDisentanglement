@@ -53,10 +53,10 @@ def parse_args(default_params: dict) -> dict:
                         dest="hpc",
                         help='Used to reduce batch size for local testing.')
     parser.add_argument("--mu_init_eval",
-                        action="store_true",
-                        default=False,
+                        action="store_false",
+                        default=True,
                         dest="mu_init_eval",
-                        help='Init mu multiple times and use best init otherwise we use Sturms mean.')
+                        help='Init mu multiple times and use best init.')
     parser.add_argument("--debug_mode",
                         action="store_true",
                         default=False,

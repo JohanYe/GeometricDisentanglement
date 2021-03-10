@@ -402,11 +402,11 @@ class Manifold(ABC):
         """
         if curve is None:
             curve = self.connecting_geodesic(p0, p1, init_curve=None)[0]
-        if curve is not None and optimize:
+        elif curve is not None and optimize:
             curve = self.connecting_geodesic(p0, p1, init_curve=curve)[0]
         with torch.no_grad():
             lm = curve.deriv(torch.zeros(1))
-        return lm, curve, curve.end
+        return lm, curve
 
     def expmap(self, p, v, t=torch.linspace(0, 1, 5)):
         """
@@ -549,7 +549,7 @@ class EmbeddedManifold(Manifold, ABC):
                         a (d)x(d) diagonal matrix.
         """
         _, J = self.embed(points, jacobian=True)  # NxDx(d)
-        M = torch.einsum("bji,bjk->bik", J, J)
+        M = J.transpose(2, 1).bmm(J) # torch.einsum("bji,bjk->bik", J, J)
         return M
 
     @abstractmethod

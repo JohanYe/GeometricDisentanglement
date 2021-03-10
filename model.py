@@ -1168,7 +1168,7 @@ class VAE(nn.Module, EmbeddedManifold):
         q = self.encode(x)
         z = q.rsample()  # (batch size)x(latent dim)
         px_z = self.decode(z)  # p(x|z)
-        ELBO = px_z.log_prob(x).mean(-1) - kl_weight * KL(q, self.prior).mean()
+        ELBO = px_z.log_prob(x).mean(-1) - kl_weight * KL(q, self.prior)
         return ELBO.mean()
 
     def fit_mean(self, data_loader, num_epochs=150, num_cycles=30, max_kl=5):
@@ -1242,15 +1242,48 @@ class VAE(nn.Module, EmbeddedManifold):
                 sum_loss += loss.item() * len(data)
                 optimizer.step()
             avg_train_loss = sum_loss / len(train_loader.dataset)
+            sum_loss = 0
             with torch.no_grad():
                 for batch_idx, (data,) in enumerate(test_loader):
                     data = data.to(self.device)
                     loss = -self.elbo(data, 1)
                     sum_loss += loss.item() * len(data)
-                avg_test_loss = sum_loss / len(train_loader.dataset)
+                avg_test_loss = sum_loss / len(test_loader.dataset)
             print('(STD)  ====> Epoch: {} Average train loss: {:.4f} Average test loss: {:.4f}'.format(epoch,
                                                                                                        avg_train_loss,
                                                                                                        avg_test_loss))
+
+    def IWAE_eval(self, data_loader, k_samples, sum=False):
+        """ Lazy method of IWAE eval """
+        k = torch.Tensor([k_samples]).to(self.device)
+        with torch.no_grad():
+            sum_loss, n_samples = 0, 0
+            for batch_idx, (data,) in enumerate(data_loader):
+                log_px_z = None
+                data = data.to(self.device)
+                for i in range(int(k.item())):
+                    q = self.encode(data)
+                    z = q.rsample()  # (batch size)x(latent dim)
+                    px_z = self.decode(z)  # p(x|z)
+
+                    if log_px_z is None:
+                        log_px_z = px_z.log_prob(data).sum(-1).unsqueeze(1) if sum else px_z.log_prob(data).mean(
+                            -1).unsqueeze(1)
+                        kld = KL(q, self.prior).unsqueeze(1)
+                    else:
+                        if sum:
+                            log_px_z = torch.cat([log_px_z, px_z.log_prob(data).sum(-1).unsqueeze(1)], 1)
+                        else:
+                            log_px_z = torch.cat([log_px_z, px_z.log_prob(data).mean(-1).unsqueeze(1)], 1)
+                        kld = torch.cat([kld, KL(q, self.prior).unsqueeze(1)], 1)
+
+                log_wk = log_px_z - kld
+                L_k = log_wk.logsumexp(dim=-1) - k.log()
+
+                loss = -L_k.sum()
+                sum_loss += loss.item()
+            avg_loss = sum_loss / len(data_loader.dataset)
+            print('(TEST)  ====> Average loss: {:.4f}'.format(avg_loss))
 
     def plot(self, z, labels, meshsize=150):
         import matplotlib.pyplot as plt

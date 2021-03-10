@@ -22,10 +22,11 @@ experiment_parameters = {
     "load_land": False,
     "debug_mode": False,
     "hpc": False,
-    "mu_init_eval": False,
+    "mu_init_eval": True,
 }
 
 experiment_parameters = experiment_setup.parse_args(experiment_parameters)
+print(experiment_parameters)
 model_dir = join_path("./model", experiment_parameters["model_dir"])
 save_dir = join_path(model_dir, experiment_parameters["exp_name"])
 print(save_dir)
@@ -73,7 +74,7 @@ if experiment_parameters["load_land"]:
     mu = torch.Tensor(np.load(join_path(model_dir, 'land_mu.npy'))).to(device).requires_grad_(True)
     A = torch.Tensor(np.load(join_path(model_dir, 'land_std.npy'))).to(device).requires_grad_(True)
 else:  # manual init
-    mu = stats.sturm_mean(net, z.to(device), num_steps=200)
+    mu = stats.sturm_mean(net, z.to(device), num_steps=5).unsqueeze(0)
     A = torch.Tensor(np.random.uniform(-1, 1, size=(2, 2)) / 100).to(device).float().requires_grad_(True)
 
 # meshgrid creating
@@ -85,7 +86,6 @@ Mxy = torch.cat((Mx.t().reshape(-1, 1), My.t().reshape(-1, 1)), dim=1)  # (meshs
 Mxy.requires_grad = False
 dv = (ran0[-1] - ran0[0]) * (ran1[-1] - ran1[0]) / (meshsize ** 2)
 curves = {}
-
 
 if experiment_parameters["sampled"]:
     with torch.no_grad():
@@ -104,12 +104,16 @@ if experiment_parameters["sampled"]:
         grid = Mxy.clone()
 else:
     grid_metric_sum = None
+
+
 if not experiment_parameters["load_land"]:
     mus, average_loglik, stds = [], [], []
     for i in range(10):
         if experiment_parameters["mu_init_eval"]:
-            mu_np = np.expand_dims(np.random.uniform(-2, 2, size=(2)), axis=0)
-            mu = torch.tensor(mu_np).to(device).float().requires_grad_(True)
+            print("lol")
+            mu = stats.sturm_mean(net, z.to(device), num_steps=20).unsqueeze(0)
+            # mu_np = np.expand_dims(np.random.uniform(-2, 2, size=(2)), axis=0)
+            # mu = torch.tensor(mu_np).to(device).float().requires_grad_(True)
         A = torch.Tensor(np.random.uniform(-1, 1, size=(2, 2)) / 100).to(device).float().requires_grad_(True)
         lpzs = []
         try:
@@ -136,7 +140,7 @@ if not experiment_parameters["load_land"]:
 
                     if idx == 5:
                         break
-            mus.append(mu)
+            mus.append(mu.clone())
             stds.append(A)
             average_loglik.append(np.mean(lpzs))
         except Exception as e:
@@ -146,6 +150,7 @@ if not experiment_parameters["load_land"]:
 if experiment_parameters["mu_init_eval"]:
     mu = mus[np.argmin(average_loglik)]
 A = stds[np.argmin(average_loglik)]
+print(average_loglik)
 
 optimizer_mu = torch.optim.Adam([mu], lr=2e-3)  # , weight_decay=1e-4)
 lpzs_log, mu_log, constant_log, distance_log = {}, {}, {}, {}
@@ -233,13 +238,12 @@ for j in range(40):
         , mu: [{:.4f},{:.4f}], std: {}'.format(epoch,
                                                torch.cat(lpzs).mean().item(),
                                                torch.cat(lpzs_test).mean().item(),
-
                                                torch.cat(mus).mean(dim=0)[0].item(),
                                                torch.cat(mus).mean(dim=0)[1].item(),
                                                np.round(A.data.tolist(), 4)))
         if epoch > 1:
-            if (test_lpz_log[epoch - 1] - 0.2 * lpz_std_log[epoch]) < test_lpz_log[epoch] < (
-                    test_lpz_log[epoch - 1] + 0.2 * lpz_std_log[epoch]):
+            if (test_lpz_log[epoch - 1] - 0.05 * lpz_std_log[epoch]) < test_lpz_log[epoch] < (
+                    test_lpz_log[epoch - 1] + 0.05 * lpz_std_log[epoch]):
                 early_stopping_counter += 1
             else:
                 early_stopping_counter = 0
@@ -264,5 +268,5 @@ for j in range(40):
 
 mu_save = best_mu.cpu().detach().numpy()
 std_save = best_std.cpu().detach().numpy()
-np.save(save_dir + 'LAND_mu_.npy', mu_save, allow_pickle=True)
-np.save(save_dir + 'LAND_std_.npy', std_save, allow_pickle=True)
+np.save(save_dir + '/LAND_mu_.npy', mu_save, allow_pickle=True)
+np.save(save_dir + '/LAND_std_.npy', std_save, allow_pickle=True)
