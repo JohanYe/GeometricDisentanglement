@@ -108,7 +108,7 @@ else:
 
 if not experiment_parameters["load_land"]:
     mus, average_loglik, stds = [], [], []
-    for i in range(10):
+    for i in range(1):
         if experiment_parameters["mu_init_eval"]:
             mu = stats.sturm_mean(net, z.to(device), num_steps=20).unsqueeze(0)
             # mu_np = np.expand_dims(np.random.uniform(-2, 2, size=(2)), axis=0)
@@ -139,19 +139,19 @@ if not experiment_parameters["load_land"]:
 
                     if idx == 5:
                         break
-            mus.append(mu.clone())
-            stds.append(A.clone())
+            mus.append(mu.clone().detach().cpu())
+            stds.append(A.clone().detach().cpu())
             average_loglik.append(np.mean(lpzs))
         except Exception as e:
             print("init seed failed")
             print(average_loglik)
             print(e)
 if experiment_parameters["mu_init_eval"]:
-    mu = mus[np.argmin(average_loglik)].clone().detach().requires_grad_(True)
-A = stds[np.argmin(average_loglik)].clone().detach().requires_grad_(True)
+    mu = mus[np.argmin(average_loglik)].to(device).detach().clone().requires_grad_(True)
+A = stds[np.argmin(average_loglik)].to(device).clone().detach().requires_grad_(True)
 print(average_loglik)
-print(mus.detach())
-print(stds.detach())
+print(mus)
+print(stds)
 
 optimizer_mu = torch.optim.Adam([mu], lr=2e-3)  # , weight_decay=1e-4)
 lpzs_log, mu_log, constant_log, distance_log = {}, {}, {}, {}

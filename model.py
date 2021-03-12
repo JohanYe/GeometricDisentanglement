@@ -577,6 +577,7 @@ class VAE_bodies(nn.Module, EmbeddedManifold):
             beta = beta_constant / torch.tensor(self.gmm_covariances, dtype=torch.float, requires_grad=False)
         else:
             beta = beta_override
+        beta = beta.to(self.device)
         self.dec_std = nnj.Sequential(nnj.RBF(d, self.num_components,
                                               points=torch.tensor(self.gmm_means, dtype=torch.float,
                                                                   requires_grad=False),
@@ -585,8 +586,10 @@ class VAE_bodies(nn.Module, EmbeddedManifold):
                                       nnj.Reciprocal(inv_maxstd),  # 1 --> 1
                                       nnj.PosLinear(1, D)).to(self.device)  # 1 --> D
         if sigma is not None:
-            self.dec_std[0] = nnj.RBF_variant(z.shape[1], self.gmm_means.shape[0], points=self.gmm_means,
-                                              beta=beta.requires_grad_(False), boxwidth=sigma)
+            self.dec_std[0] = nnj.RBF_variant(d, self.gmm_means.shape[0],
+                                              points=torch.tensor(self.gmm_means, dtype=torch.float,
+                                                                  requires_grad=False),
+                                              beta=beta.requires_grad_(False), boxwidth=sigma).to(self.device)
         with torch.no_grad():
             self.dec_std[1].weight[:] = ((torch.tensor(self.clf_weights, dtype=torch.float).exp() - 1.0).log()).to(
                 self.device)

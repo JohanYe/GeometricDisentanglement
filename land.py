@@ -1,6 +1,7 @@
 import torch
 
-def land_auto(loc, A, z_points, grid, dv, model, constant=None, batch_size=1024, metric_grid_sum=None, grid_sampled=None):
+def land_auto(loc, A, z_points, grid, dv, model, constant=None, batch_size=1024, metric_grid_sum=None, grid_sampled=None,
+              init_curve=None):
     """
     Checks if scale is tensor or scale and calls corresponding LAND function
     :param loc: mu
@@ -23,7 +24,7 @@ def land_auto(loc, A, z_points, grid, dv, model, constant=None, batch_size=1024,
                                                              dv=dv,
                                                              model=model,
                                                              logspace=True,
-                                                             init_curve=None,
+                                                             init_curve=init_curve,
                                                              batch_size=batch_size)
 
     elif A.dim() == 1:
@@ -35,7 +36,7 @@ def land_auto(loc, A, z_points, grid, dv, model, constant=None, batch_size=1024,
                                                              constant=constant,
                                                              model=model,
                                                              logspace=True,
-                                                             init_curve=None,
+                                                             init_curve=init_curve,
                                                              batch_size=batch_size)
     else:
         lpz, init_curve, D2, constant = LAND_fullcov(loc=loc,
@@ -46,7 +47,7 @@ def land_auto(loc, A, z_points, grid, dv, model, constant=None, batch_size=1024,
                                                      constant=constant,
                                                      model=model,
                                                      logspace=True,
-                                                     init_curve=None,
+                                                     init_curve=init_curve,
                                                      batch_size=batch_size)
 
     return lpz, init_curve, D2, constant
@@ -136,10 +137,7 @@ def LAND_fullcov_sampled(loc, A, z_points, dv, sampled_grid_points, metric_sum, 
     constant = approx_constant.mean() * metric_sum
 
     loc = loc.repeat([z_points.shape[0], 1])
-    if init_curve is not None:
-        D2, init_curve, success = model.dist2_explicit(loc, z_points, A=A)
-    else:
-        D2, init_curve, success = model.dist2_explicit(loc, z_points, A=A)
+    D2, init_curve, success = model.dist2_explicit(loc, z_points, A=A, C=init_curve)
 
     inside = (-(D2) / 2).squeeze(-1)
     pz = (1 / constant) * inside.exp()
@@ -165,7 +163,8 @@ def LAND_grid_prob(grid, model, batch_size=1024, device="cuda"):
                 grid_save = torch.cat((grid_save, metric_determinant), dim=0)
 
     print("negative grid metric:", grid_save[grid_save < 0].shape[0])
-    grid_save[grid_save < 0] = model.metric(grid[grid_save < 0].to(device)).det()
+    if grid_save[grid_save < 0].shape[0] > 0:
+        grid_save[grid_save < 0] = model.metric(grid[grid_save < 0].to(device)).det()
     grid_metric = grid_save.sqrt()
     grid_prob = grid_metric / grid_metric.sum()
     return grid_prob.cpu(), grid_metric.cpu(), grid_metric.sum().cpu(), grid_save

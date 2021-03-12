@@ -52,14 +52,15 @@ class __Dist2__(torch.autograd.Function):
         else:
             covariance_inv = A.T @ A
             A_batched = A.unsqueeze(0).repeat([M0.shape[0], 1, 1])
+            A_T_batched = A.T.unsqueeze(0).repeat([M0.shape[0], 1, 1])
 
-            # p0
-            tmp = covariance_inv.unsqueeze(0).repeat([Mlm0.shape[0], 1, 1]).bmm(Mlm0.unsqueeze(-1))
-            inv_cov_Mlm0 = tmp.squeeze(-1)
+            # p0 # -2A^TAMv
+            inv_cov_Mlm0 = covariance_inv.unsqueeze(0).repeat([Mlm0.shape[0], 1, 1]).bmm(Mlm0.unsqueeze(-1)).squeeze(-1)
+#             inv_cov_Mlm0 = A_T_batched.bmm(M0).bmm(A_batched).bmm(lm0.unsqueeze(-1)).squeeze(-1)  # -2A^TMAv
 
-            # p1
-            tmp = covariance_inv.unsqueeze(0).repeat([Mlm1.shape[0], 1, 1]).bmm(Mlm1.unsqueeze(-1))
-            inv_cov_Mlm1 = tmp.squeeze(-1)
+            # p1 # -2A^TAMv
+            inv_cov_Mlm1 = covariance_inv.unsqueeze(0).repeat([Mlm1.shape[0], 1, 1]).bmm(Mlm1.unsqueeze(-1)).squeeze(-1)
+#             inv_cov_Mlm1 = A_T_batched.bmm(M1).bmm(A_batched).bmm(lm1.unsqueeze(-1)).squeeze(-1)  # -2A^TMAv
 
             # covariance gradients.
             AMv = A_batched.bmm(M0).bmm(lm0.unsqueeze(-1))
