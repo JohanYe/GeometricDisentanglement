@@ -4,7 +4,7 @@ from torch.utils.data import Dataset
 import model
 import os
 from os.path import join as join_path
-
+import utils
 
 def parse_args(default_params: dict) -> dict:
     """
@@ -135,7 +135,7 @@ def save_checkpoint(state, save_dir, ckpt_name='best.pth.tar'):
 def make_dir(directory_path):
     if not os.path.exists(directory_path):
         os.mkdir(directory_path)
-        print_stdout("Directory {} created.".format(directory_path))
+        utils.print_stdout("Directory {} created.".format(directory_path))
 
 class LatentVariablesDataset(Dataset):
     @property
