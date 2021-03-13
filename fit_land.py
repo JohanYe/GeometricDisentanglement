@@ -1,5 +1,5 @@
 import torch
-from utils import load_checkpoint, custom_dataset, print_stdout, make_dir
+from experiment_setup import load_checkpoint, custom_dataset, make_dir
 import visualize
 import numpy as np
 import land
@@ -25,6 +25,7 @@ experiment_parameters = {
     "mu_init_eval": True,
 }
 
+# Experiment setup
 experiment_parameters = experiment_setup.parse_args(experiment_parameters)
 print(experiment_parameters)
 model_dir = join_path("./model", experiment_parameters["model_dir"])
@@ -34,6 +35,7 @@ make_dir(save_dir)  # will only create new if it doesn't exist
 start_time = time.time()
 torch.manual_seed(0)
 
+# Hyperparams
 batch_size = 512 if experiment_parameters["hpc"] else 64
 layers = torch.linspace(28 ** 2, 2, 3).int()
 num_components = 50
@@ -54,15 +56,10 @@ else:
     x_train, y_train, N = data.load_mnist_train(root="./data", label_threshold=exp_regex[1], one_digit=one_digit)
 
 # load model
-net = utils.load_model(model_dir, x_train)
+net = experiment_setup.load_model(model_dir, x_train)
 
 with torch.no_grad():
     z = torch.chunk(net.encoder(x_train.to(device)), chunks=2, dim=-1)[0].cpu()  # [0] = mus
-    minz, _ = z.min(dim=0)  # d
-    maxz, _ = z.max(dim=0)  # d
-    alpha = 0.1 * (maxz - minz)  # d
-    minz -= alpha  # d
-    maxz += alpha
     z_data = torch.utils.data.TensorDataset(z)
     N_train = int(0.9 * len(z_data))
     N_test = len(z_data) - int(0.9 * len(z_data))
@@ -79,13 +76,8 @@ else:  # manual init
 
 # meshgrid creating
 meshsize = 100 if experiment_parameters["sampled"] else 20
-ran0 = torch.linspace(minz[0].item(), maxz[0].item(), meshsize)
-ran1 = torch.linspace(minz[1].item(), maxz[1].item(), meshsize)
-Mx, My = torch.meshgrid(ran0, ran1)
-Mxy = torch.cat((Mx.t().reshape(-1, 1), My.t().reshape(-1, 1)), dim=1)  # (meshsize^2)x2
-Mxy.requires_grad = False
-dv = (ran0[-1] - ran0[0]) * (ran1[-1] - ran1[0]) / (meshsize ** 2)
-curves = {}
+Mxy, dv = utils.create_grid(z, meshsize)
+# curves = {}  # for init curves, but they seem useless for now
 
 if experiment_parameters["sampled"]:
     with torch.no_grad():
@@ -100,8 +92,6 @@ if experiment_parameters["sampled"]:
             grid_metric = grid_save.sqrt()
             grid_prob = grid_metric / grid_metric.sum()
             grid_metric_sum = grid_metric.sum()
-
-        grid = Mxy.clone()
 else:
     grid_metric_sum = None
 
@@ -235,7 +225,7 @@ for j in range(40):
         test_lpz_log[epoch] = torch.cat(lpzs_test).mean().item()
         lpz_std_log[epoch] = torch.cat(lpzs).std().item()
 
-        print_stdout('Epoch: {}, P(z) train: {:.4f}, P(z) test: {:.4f} \
+        utils.print_stdout('Epoch: {}, P(z) train: {:.4f}, P(z) test: {:.4f} \
         , mu: [{:.4f},{:.4f}], std: {}'.format(epoch,
                                                torch.cat(lpzs).mean().item(),
                                                torch.cat(lpzs_test).mean().item(),

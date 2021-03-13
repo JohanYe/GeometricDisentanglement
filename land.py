@@ -156,8 +156,12 @@ def LAND_grid_prob(grid, model, batch_size=1024, device="cuda"):
     model.eval()
     with torch.no_grad():
         for i in range(iters):
-            z = grid[i * batch_size:(i + 1) * batch_size, :] if i < (iters - 1) else grid[i * batch_size:, :]
-            metric_determinant = model.metric(z.to(device)).det()
+            grid_point = grid[i * batch_size:(i + 1) * batch_size, :] if i < (iters - 1) else grid[i * batch_size:, :]
+            metric_determinant = model.metric(grid_point.to(device)).det()
+            if metric_determinant < 0:
+                net = net.double()
+                metric_determinant = net.metric(grid_point.double().to(device)).double().det()
+                net = net.float()
 
             if i == 0:  # for metric
                 grid_save = metric_determinant
