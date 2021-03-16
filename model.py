@@ -26,7 +26,7 @@ class BasicVAE(nn.Module, EmbeddedManifold):
         enc.append(nnj.Linear(hidden_layer[-1], int(latent_space * 2)))
         self.encoder = nnj.Sequential(*enc)
 
-        dec = [nnj.Linear(latent_space, hidden_layer[-1]), nnj.Softplus()]
+        dec = [nnj.ResidualBlock(nnj.Linear(2, hidden_layer[0]), nnj.Softplus())]
         for i in reversed(range(1, len(hidden_layer))):
             dec.append(nnj.ResidualBlock(nnj.Linear(hidden_layer[i], hidden_layer[i - 1]), nnj.Softplus()))
         dec.extend([nnj.ResidualBlock(nnj.Linear(hidden_layer[0], 784), nnj.Sigmoid())])
@@ -36,27 +36,26 @@ class BasicVAE(nn.Module, EmbeddedManifold):
         self.init_decoder_scale = 0.01 * torch.ones(784, device=self.device)
         self.decoder_std = None
 
+    def encode(self, x):
+        z_mu, z_lv = torch.chunk(self.encoder(x), 2, dim=-1)
+        return td.Independent(td.Normal(loc=z_mu, scale=z_lv.mul(0.5).exp() + 1e-10), 1)
+
+    def decode(self, z):
+        x_mu = self.decoder_loc(z)
+        x_std = self.decoder_scale(z)
+        return td.Normal(loc=x_mu, scale=x_std + 1e-10)
+
     def decoder_scale(self, z):
         if self.decoder_std is None:
             return self.init_decoder_scale
         else:
             return self.decoder_std(z).mul(0.5).exp()
 
-    def encode(self, x):
-        z_mu, z_lv = torch.chunk(self.encoder(x), 2, dim=-1)
-        return td.Independent(td.Normal(loc=z_mu, scale=softplus(z_lv) + 1e-10), 1)
-
-    def decode(self, z):
-        #         out = self.decoder(z)
-        x_mu = self.decoder_loc(z)
-        x_std = self.decoder_scale(z)
-        return td.Normal(loc=x_mu, scale=x_std + 1e-10)
-
     def elbo(self, x, kl_weight=1):
         q = self.encode(x)
         z = q.rsample()  # (batch size)x(latent dim)
         px_z = self.decode(z)  # p(x|z)
-        ELBO = px_z.log_prob(x).sum(-1) - kl_weight * KL(q, self.prior)
+        ELBO = px_z.log_prob(x).mean(-1) - kl_weight * KL(q, self.prior)
         return ELBO.mean()
 
     def fit_mean(self, data_loader, num_epochs=150, num_cycles=30, max_kl=5):
@@ -67,14 +66,17 @@ class BasicVAE(nn.Module, EmbeddedManifold):
             for layer in self.decoder_std.parameters():
                 layer.requires_grad = False
 
-        optimizer = torch.optim.Adam(self.parameters(), lr=3e-4)
+        optimizer = torch.optim.Adam(self.parameters(), lr=1e-3)
         train_loss = []
 
         for cycle in range(num_cycles):
             for epoch in range(num_epochs):
                 sum_loss = 0
                 # implements cyclic KL scaling
-                lam = min(max_kl, max(0.0, max_kl * 2 * (epoch - switch_epoch) / (num_epochs - switch_epoch)))
+                if cycle < num_cycles - num_cycles // 5:
+                    lam = min(max_kl, max(0.0, 2 * max_kl * (epoch - switch_epoch) / (num_epochs - switch_epoch)))
+                else:
+                    lam = 1
                 for batch_idx, (data,) in enumerate(data_loader):
                     data = data.to(self.device)
                     optimizer.zero_grad()
@@ -89,12 +91,10 @@ class BasicVAE(nn.Module, EmbeddedManifold):
         return train_loss
 
     def init_std_naive(self):
-        #         self.decoder_std = nnj.Sequential(*[nnj.ResidualBlock(nnj.Linear(self.hidden_layer[0], 784)),
-        #                                            nnj.Sigmoid()]).to(self.device)
         dec = [nnj.Linear(self.latent_space, self.hidden_layer[-1]), nnj.Softplus()]
         for i in reversed(range(1, len(self.hidden_layer))):
             dec.append(nnj.ResidualBlock(nnj.Linear(self.hidden_layer[i], self.hidden_layer[i - 1]), nnj.Softplus()))
-        dec.extend([nnj.Linear(self.hidden_layer[0], 784), nnj.Softplus()])
+        dec.extend([nnj.Linear(self.hidden_layer[0], 784)])
         self.decoder_std = nnj.Sequential(*dec).to(self.device)
 
     def fit_std(self, data_loader, num_epochs=150):
@@ -144,6 +144,8 @@ class BasicVAE(nn.Module, EmbeddedManifold):
                         kld = torch.cat([kld, KL(q, self.prior).unsqueeze(1)], 1)
 
                 log_wk = log_px_z - kld
+                if log_wk.sum() > 0:
+                    log_wk = -1*log_wk
                 L_k = log_wk.logsumexp(dim=-1) - k.log()
 
                 loss = L_k.sum()
@@ -240,7 +242,7 @@ class VAE(nn.Module, EmbeddedManifold):
         self.num_components = num_components
 
         enc = []
-        for k in range(len(layers) - 1):
+        for k in range(len(layers) - 2):
             in_features = int(layers[k])
             out_features = int(layers[k + 1])
             enc.append(nnj.ResidualBlock(nnj.Linear(in_features, out_features),
@@ -251,9 +253,12 @@ class VAE(nn.Module, EmbeddedManifold):
         for k in reversed(range(len(layers) - 1)):
             in_features = int(layers[k + 1])
             out_features = int(layers[k])
-            dec.append(nnj.ResidualBlock(nnj.Linear(in_features, out_features),
-                                         nnj.Softplus()))
-        dec.append(nnj.Sigmoid())
+            if out_features != layers[0]:
+                dec.append(nnj.ResidualBlock(nnj.Linear(in_features, out_features),
+                                             nnj.Softplus()))
+            else:
+                dec.append(nnj.ResidualBlock(nnj.Linear(in_features, out_features),
+                                             nnj.Sigmoid()))
 
         # Note how we use 'nnj' instead of 'nn' -- this gives automatic
         # computation of Jacobians of the implemented neural network.
@@ -298,7 +303,7 @@ class VAE(nn.Module, EmbeddedManifold):
 
     def fit_mean(self, data_loader, num_epochs=150, num_cycles=30, max_kl=5):
         switch_epoch = num_epochs // 5
-        optimizer = torch.optim.Adam(self.parameters(), lr=1e-4)
+        optimizer = torch.optim.Adam(self.parameters(), lr=1e-3)
 
         for cycle in range(1, num_cycles + 1):
             print('Cycle:', cycle)
@@ -321,9 +326,9 @@ class VAE(nn.Module, EmbeddedManifold):
 
     # This function sets up the data structures for the RBF network for modeling variance.
     # XXX: We should do this more elagantly directly in __init__
-    def init_std(self, x, gmm_mu=None, gmm_cv=None, weights=None):
+    def init_std(self, x, gmm_mu=None, gmm_cv=None, weights=None, beta=0.5, beta_override=None):
         with torch.no_grad():
-            z = torch.chunk(self.encoder(x.to(self.device)), chunks=2, dim=-1)[0]
+            z = self.encode(x.to(self.device)).sample()
         N, D = x.shape
         d = z.shape[1]
         inv_maxstd = 1e-1  # 1.0 / x.std(dim=0).mean() # x.std(dim=0).mean() #D*x.var(dim=0).mean()
@@ -340,12 +345,15 @@ class VAE(nn.Module, EmbeddedManifold):
             self.gmm_means = gmm_mu
             self.gmm_covariances = gmm_cv
             self.clf_weights = weights
-
+        if beta_override is None:
+            beta = beta / torch.tensor(self.gmm_covariances, dtype=torch.float,
+                                       requires_grad=False)
+        else:
+            beta = beta_override
         self.dec_std = nnj.Sequential(nnj.RBF(d, self.num_components,
                                               points=torch.tensor(self.gmm_means, dtype=torch.float,
                                                                   requires_grad=False),
-                                              beta=0.5 / torch.tensor(self.gmm_covariances, dtype=torch.float,
-                                                                      requires_grad=False)),  # d --> num_components
+                                              beta=beta),  # d --> num_components
                                       nnj.PosLinear(self.num_components, 1, bias=False),  # num_components --> 1
                                       nnj.Reciprocal(inv_maxstd),  # 1 --> 1
                                       nnj.PosLinear(1, D)).to(self.device)  # 1 --> D
@@ -402,7 +410,9 @@ class VAE(nn.Module, EmbeddedManifold):
                             log_px_z = torch.cat([log_px_z, px_z.log_prob(data).mean(-1).unsqueeze(1)], 1)
                         kld = torch.cat([kld, KL(q, self.prior).unsqueeze(1)], 1)
 
-                log_wk = -1 * (log_px_z - kld)
+                log_wk = log_px_z - kld
+                if log_wk.sum() > 0:
+                    log_wk = -1*log_wk
                 L_k = log_wk.logsumexp(dim=-1) - k.log()
 
                 loss = -L_k.sum()
@@ -488,7 +498,7 @@ class VAE(nn.Module, EmbeddedManifold):
 
 
 class VAE_bodies(nn.Module, EmbeddedManifold):
-    def __init__(self, x, layers, num_components=100, device=None):
+    def __init__(self, x, layers, num_components=100, device=None,old=False):
         super(VAE_bodies, self).__init__()
 
         self.device = device
@@ -510,9 +520,18 @@ class VAE_bodies(nn.Module, EmbeddedManifold):
         for k in reversed(range(len(layers) - 1)):
             in_features = int(layers[k + 1])
             out_features = int(layers[k])
-            dec.append(nnj.ResidualBlock(nnj.Linear(in_features, out_features),
-                                         nnj.Softplus()))
-        dec.append(nnj.Sigmoid())
+            if not old:  # temporary to load old models TODO: delete
+                if out_features != layers[0]:
+                    dec.append(nnj.ResidualBlock(nnj.Linear(in_features, out_features),
+                                                 nnj.Softplus()))
+                else:
+                    dec.append(nnj.ResidualBlock(nnj.Linear(in_features, out_features),
+                                                 nnj.Sigmoid()))
+            else:
+                dec.append(nnj.ResidualBlock(nnj.Linear(in_features, out_features),
+                                             nnj.Softplus()))
+                if out_features == layers[0]:
+                    dec.append(nnj.Sigmoid())
 
         # Note how we use 'nnj' instead of 'nn' -- this gives automatic
         # computation of Jacobians of the implemented neural network.
@@ -581,7 +600,7 @@ class VAE_bodies(nn.Module, EmbeddedManifold):
     # This function sets up the data structures for the RBF network for modeling variance.
     # XXX: We should do this more elagantly directly in __init__
     def init_std(self, x, gmm_mu=None, gmm_cv=None, weights=None, inv_maxstd=1e-1, beta_constant=0.5,
-                 component_overwrite=None, beta_override=None, n_samples=5, z_override=None, sigma=None):
+                 component_overwrite=None, beta_override=None, n_samples=2, z_override=None, sigma=None):
         if component_overwrite is not None:
             self.num_components = component_overwrite
         if z_override is None:
@@ -611,11 +630,11 @@ class VAE_bodies(nn.Module, EmbeddedManifold):
             beta = beta_constant / torch.tensor(self.gmm_covariances, dtype=torch.float, requires_grad=False)
         else:
             beta = beta_override
-        beta = beta.to(self.device)
+        self.beta = beta.to(self.device)
         self.dec_std = nnj.Sequential(nnj.RBF(d, self.num_components,
                                               points=torch.tensor(self.gmm_means, dtype=torch.float,
                                                                   requires_grad=False),
-                                              beta=beta),  # d --> num_components
+                                              beta=self.beta),  # d --> num_components
                                       nnj.PosLinear(self.num_components, 1, bias=False),  # num_components --> 1
                                       nnj.Reciprocal(inv_maxstd),  # 1 --> 1
                                       nnj.PosLinear(1, D)).to(self.device)  # 1 --> D

@@ -93,19 +93,23 @@ class custom_dataset(torch.utils.data.Dataset):
         return self.data_tensor.size(0)
 
 
-def load_model(model_dir, x_train, device="cuda"):
+def load_model(model_dir, x_train, experiment_parameters, device="cuda"):
     """ load model with appropriate settings """
     checkpoint = join_path(model_dir, 'best.pth.tar')
     if not os.path.exists(checkpoint):
         raise Exception("File {} dosen't exists!".format(checkpoint))
     ckpt = torch.load(checkpoint, map_location=device)
-    saved_dict = ckpt['state_dict']
     beta = ckpt.get("beta_override")
     sigma = ckpt.get("sigma")
-    net = model.VAE_bodies(x_train, ckpt['layers'], num_components=ckpt['num_components'], device=device)
-    net.init_std(x_train, gmm_mu=torch.Tensor(ckpt['gmm_means']), gmm_cv=torch.Tensor(ckpt['gmm_cv']),
-                 weights=ckpt['weights'], inv_maxstd=ckpt['inv_maxstd'], beta_constant=ckpt['beta_constant'],
-                 beta_override=beta, sigma=sigma)
+    if "bodies" in experiment_parameters["dataset"]:
+        net = model.VAE_bodies(x_train, ckpt['layers'], num_components=ckpt['num_components'], device=device)
+        net.init_std(x_train, gmm_mu=torch.Tensor(ckpt['gmm_means']), gmm_cv=torch.Tensor(ckpt['gmm_cv']),
+                     weights=ckpt['weights'], inv_maxstd=ckpt['inv_maxstd'], beta_constant=ckpt['beta_constant'],
+                     beta_override=beta, sigma=sigma)
+    elif "mnist" in experiment_parameters["dataset"]:
+        net = model.VAE(x_train, layers=ckpt['layers'], num_components=ckpt['num_components'], device=device)
+        net.init_std(x_train, gmm_mu=ckpt['gmm_means'], gmm_cv=torch.Tensor(ckpt['gmm_cv']), weights=ckpt['weights'],
+                     beta=ckpt['beta_constant'])
     saved_dict = ckpt['state_dict']
     new_dict = net.state_dict()
     new_dict.update(saved_dict)

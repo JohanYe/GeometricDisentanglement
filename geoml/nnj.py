@@ -436,7 +436,7 @@ class ResidualBlock(nn.Module):
         super().__init__()
 
         # Are we given a sequence or should construct one?
-        if len(args) is 1 and isinstance(args[0], (modules.container.Sequential, Sequential)):
+        if len(args) is 1 and isinstance(args[0], (nn.modules.container.Sequential, Sequential)):
             self._F = args[0]
         else:
             self._F = Sequential(*args)
@@ -557,7 +557,7 @@ class RBF(nn.Module):
         J, _ = self._jacobian(x, val) # (B)x(1)x(in) -- the current Jacobian
         return __jac_mul_generic__(J, Jseq, JseqType)
 
-#temporary new version
+
 class RBF_variant(nn.Module):
     def __init__(self, dim, num_points, points=None, beta=1.0, boxwidth=0.0):
         super().__init__()

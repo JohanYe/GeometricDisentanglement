@@ -46,26 +46,30 @@ device = torch.device('cuda:0') if torch.cuda.is_available() else torch.device('
 if "outlier" in experiment_parameters["dataset"] or "augment" in experiment_parameters["dataset"]:
     data_path = join_path("./data", experiment_parameters["dataset"])
     x_train, y_train, N = data.load_mnist_augment(data_path)
+    x_test = None
     print("data samples loaded", N)
 elif "bodies" in experiment_parameters["dataset"]:
     data_path = join_path("./data", "bodies/")
     x_train, y_train, N = data.load_bodies(data_path)
+    x_test = None
+elif "mnist" == experiment_parameters["dataset"]:
+    x_train, y_train, N = data.load_mnist_train(root="./data", label_threshold=4, one_digit=False)
+    x_test, y_test, N_test = data.load_mnist_train(root="./data", label_threshold=4, one_digit=False, train=False)
+    x_test = None
 else:
     exp_regex = (re.findall(r"([a-zA-Z ]*)(\d*)", experiment_parameters["dataset"]))
     one_digit = True if len(exp_regex[1]) == 1 else False
     x_train, y_train, N = data.load_mnist_train(root="./data", label_threshold=exp_regex[1], one_digit=one_digit)
+    x_test = None
 
 # load model
-net = experiment_setup.load_model(model_dir, x_train)
+net = experiment_setup.load_model(model_dir, x_train, experiment_parameters)
 
-with torch.no_grad():
-    z = torch.chunk(net.encoder(x_train.to(device)), chunks=2, dim=-1)[0].cpu()  # [0] = mus
-    z_data = torch.utils.data.TensorDataset(z)
-    N_train = int(0.9 * len(z_data))
-    N_test = len(z_data) - int(0.9 * len(z_data))
-    train_set, test_set = torch.utils.data.random_split(z_data, [N_train, N_test])
-    train_loader = torch.utils.data.DataLoader(train_set, batch_size=batch_size, shuffle=True)
-    test_loader = torch.utils.data.DataLoader(test_set, batch_size=batch_size, shuffle=True)
+train_loader, test_loader, N_train, N_test = data.train_test_split_latents(net,
+                                                                           experiment_parameters,
+                                                                           x_train,
+                                                                           x_test,
+                                                                           batch_size=batch_size)
 
 if experiment_parameters["load_land"]:
     mu = torch.Tensor(np.load(join_path(model_dir, 'land_mu.npy'))).to(device).requires_grad_(True)
@@ -98,7 +102,7 @@ else:
 
 if not experiment_parameters["load_land"]:
     mus, average_loglik, stds = [], [], []
-    for i in range(1):
+    for i in range(10):
         if experiment_parameters["mu_init_eval"]:
             mu = stats.sturm_mean(net, z.to(device), num_steps=20).unsqueeze(0)
             # mu_np = np.expand_dims(np.random.uniform(-2, 2, size=(2)), axis=0)
@@ -109,7 +113,7 @@ if not experiment_parameters["load_land"]:
             with torch.no_grad():
                 for idx, batch in enumerate(tqdm(train_loader)):
                     if experiment_parameters["sampled"]:
-                        idxs = torch.multinomial(grid_prob, num_samples=batch_size, replacement=False)
+                        idxs = torch.multinomial(grid_prob, num_samples=batch_size, replacement=True)
                         Mxy_batch = Mxy[idxs].to(device)
                     else:
                         Mxy_batch = None
@@ -164,7 +168,7 @@ for j in range(40):
             optimizer_std.zero_grad()
 
             if experiment_parameters["sampled"]:
-                idxs = torch.multinomial(grid_prob, num_samples=batch_size, replacement=False)
+                idxs = torch.multinomial(grid_prob, num_samples=batch_size, replacement=True)
                 Mxy_batch = Mxy[idxs].to(device)
             else:
                 Mxy_batch = None

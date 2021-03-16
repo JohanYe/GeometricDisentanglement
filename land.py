@@ -2,7 +2,7 @@ import torch
 from tqdm import tqdm
 
 def land_auto(loc, A, z_points, grid, dv, model, constant=None, batch_size=1024, metric_grid_sum=None, grid_sampled=None,
-              init_curve=None, grid_init_curves=None):
+              init_curve=None, grid_init_curves=None, q_prob=None):
     """
     Checks if scale is tensor or scale and calls corresponding LAND function
     :param loc: mu
@@ -22,6 +22,7 @@ def land_auto(loc, A, z_points, grid, dv, model, constant=None, batch_size=1024,
                                                              z_points=z_points,
                                                              sampled_grid_points=grid_sampled,
                                                              metric_sum=metric_grid_sum,
+                                                             q_prob=q_prob,
                                                              dv=dv,
                                                              model=model,
                                                              logspace=True,
@@ -113,7 +114,7 @@ def estimate_constant_full(mu, A, grid, dv, model, batch_size=512, sum=True):
 
 
 def LAND_fullcov_sampled(loc, A, z_points, dv, sampled_grid_points, metric_sum, model=None, logspace=True,
-                         init_curve=None, batch_size=256, grid_init_curves=None):
+                         init_curve=None, batch_size=256, grid_init_curves=None, q_prob=None):
     """
     full covariance matrix, expecting sampled grid data points.
     """
@@ -124,19 +125,19 @@ def LAND_fullcov_sampled(loc, A, z_points, dv, sampled_grid_points, metric_sum, 
     for i in range(iters):
         # data
         grid_points_batch = sampled_grid_points[i * batch_size:(i + 1) * batch_size, :] if i < (
-                    iters - 1) else sampled_grid_points[
-                                    i * batch_size:, :]
+                    iters - 1) else sampled_grid_points[i * batch_size:, :]
+        q_batch = q_prob[i * batch_size:(i + 1) * batch_size, :] if i < (iters - 1) else q_prob[i * batch_size:, :]
         mu_repeated = loc.repeat([grid_points_batch.shape[0], 1])
 
         # calcs
         D2, _, _ = model.dist2_explicit(mu_repeated, grid_points_batch.to(device), A=A, C=grid_init_curves)
-        exponential_term = (-D2 / 2).squeeze(-1).exp() * dv
+        exponential_term = (-D2 / 2).squeeze(-1).exp() * q_batch.to(device)
 
         if i == 0:
             approx_constant = exponential_term
         else:
             approx_constant = torch.cat((approx_constant, exponential_term), dim=0)
-    constant = approx_constant.mean() * metric_sum
+    constant = approx_constant.mean() * metric_sum * dv
 
     loc = loc.repeat([z_points.shape[0], 1])
     D2, init_curve, success = model.dist2_explicit(loc, z_points, A=A, C=init_curve)
@@ -159,9 +160,9 @@ def LAND_grid_prob(grid, model, batch_size=1024, device="cuda"):
             grid_point = grid[i * batch_size:(i + 1) * batch_size, :] if i < (iters - 1) else grid[i * batch_size:, :]
             metric_determinant = model.metric(grid_point.to(device)).det()
             if metric_determinant < 0:
-                net = net.double()
-                metric_determinant = net.metric(grid_point.double().to(device)).double().det()
-                net = net.float()
+                model = model.double()
+                metric_determinant = model.metric(grid_point.double().to(device)).double().det()
+                model = model.float()
 
             if i == 0:  # for metric
                 grid_save = metric_determinant

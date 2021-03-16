@@ -132,7 +132,7 @@ class GeodesicODE(torch.nn.Module):
         super(GeodesicODE, self).__init__()
         self.manifold = manifold
 
-    def forward(self, t, x, silent=True):
+    def forward(self, t, x):
         """
         Evaluate the geodesic ODE as a first order ODE.
 
@@ -153,7 +153,7 @@ class GeodesicODE(torch.nn.Module):
         D = x.numel()//(t.numel()*2)
         c = x[:D].view(D, -1).t() # TxD
         dc = x[D:].view(D, -1).t() # TxD
-        ddc = self.manifold.geodesic_system(c, dc, silent=silent)
+        ddc = self.manifold.geodesic_system(c, dc)
         retval = torch.cat([dc, ddc], dim=1) # Tx(2D)
         return retval.t() # (2D)xT
 
