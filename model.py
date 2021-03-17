@@ -326,7 +326,8 @@ class VAE(nn.Module, EmbeddedManifold):
 
     # This function sets up the data structures for the RBF network for modeling variance.
     # XXX: We should do this more elagantly directly in __init__
-    def init_std(self, x, gmm_mu=None, gmm_cv=None, weights=None, beta=0.5, beta_override=None):
+    def init_std(self, x, gmm_mu=None, gmm_cv=None, weights=None, beta_constant=0.5, beta_override=None):
+        self.beta_constant = beta_constant
         with torch.no_grad():
             z = self.encode(x.to(self.device)).sample()
         N, D = x.shape
@@ -346,14 +347,14 @@ class VAE(nn.Module, EmbeddedManifold):
             self.gmm_covariances = gmm_cv
             self.clf_weights = weights
         if beta_override is None:
-            beta = beta / torch.tensor(self.gmm_covariances, dtype=torch.float,
-                                       requires_grad=False)
+            self.beta = beta_constant / torch.tensor(self.gmm_covariances, dtype=torch.float, requires_grad=False)
         else:
-            beta = beta_override
+            self.beta = beta_override
+        self.beta = self.beta.to(self.device)
         self.dec_std = nnj.Sequential(nnj.RBF(d, self.num_components,
                                               points=torch.tensor(self.gmm_means, dtype=torch.float,
                                                                   requires_grad=False),
-                                              beta=beta),  # d --> num_components
+                                              beta=self.beta),  # d --> num_components
                                       nnj.PosLinear(self.num_components, 1, bias=False),  # num_components --> 1
                                       nnj.Reciprocal(inv_maxstd),  # 1 --> 1
                                       nnj.PosLinear(1, D)).to(self.device)  # 1 --> D
@@ -642,11 +643,10 @@ class VAE_bodies(nn.Module, EmbeddedManifold):
             self.dec_std[0] = nnj.RBF_variant(d, self.gmm_means.shape[0],
                                               points=torch.tensor(self.gmm_means, dtype=torch.float,
                                                                   requires_grad=False),
-                                              beta=beta.requires_grad_(False), boxwidth=sigma).to(self.device)
+                                              beta=self.beta.requires_grad_(False), boxwidth=sigma).to(self.device)
         with torch.no_grad():
             self.dec_std[1].weight[:] = ((torch.tensor(self.clf_weights, dtype=torch.float).exp() - 1.0).log()).to(
                 self.device)
-        self.dec_std
 
     def fit_std(self, data_loader, num_epochs):
         optimizer = torch.optim.Adam(self.dec_std.parameters(), weight_decay=1e-4)

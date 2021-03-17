@@ -4,6 +4,7 @@ import numpy as np
 import torchvision
 from PIL import Image
 from torchvision import transforms as transforms
+import torch.distributions as td
 
 def load_mnist_train(root, label_threshold, one_digit=False, download=False, train=True):
     mnist_train = torchvision.datasets.MNIST(root, train=train, download=download)
@@ -21,25 +22,29 @@ def load_mnist_train(root, label_threshold, one_digit=False, download=False, tra
 
 def train_test_split_latents(net, experiment_parameters, x_train, x_test=None, batch_size=512, device="cuda"):
     with torch.no_grad():
-        z = net.encode(x_train.to(device)).sample().cpu()  # [0] = mus
-    z_data = torch.utils.data.TensorDataset(z)
+        z_loc, z_scale = torch.chunk(net.encoder(x_train.to(device)), chunks=2, dim=-1)  # [0] = mus
+        z_loc = z_loc.cpu()
+        z_scale = z_scale.cpu()
+    z_data = sample_latents(z_loc, z_scale.mul(0.5).exp())
     if experiment_parameters["dataset"] != "mnist":
         N_train = int(0.9 * len(z_data))
         N_test = len(z_data) - int(0.9 * len(z_data))
         train_set, test_set = torch.utils.data.random_split(z_data, [N_train, N_test])
         train_loader = torch.utils.data.DataLoader(train_set, batch_size=batch_size, shuffle=True)
         test_loader = torch.utils.data.DataLoader(test_set, batch_size=batch_size, shuffle=True)
-        return train_loader, test_loader, N_train, N_test
+        return train_loader, test_loader, N_train, N_test, z_loc
     else:
         with torch.no_grad():
-            z_test = net.encode(x_test.to(device)).sample().cpu()  # [0] = mus
-        train_set = CustomTensorDataset(z)
-        test_set = CustomTensorDataset(z_test)
+            z_loc_test, z_scale_test = torch.chunk(net.encoder(x_test.to(device)), chunks=2, dim=-1)  # [0] = mus
+            z_loc_test = z_loc_test.cpu()
+            z_scale_test = z_scale_test.cpu()
+        train_set = sample_latents(z_loc, z_scale.mul(0.5).exp())
+        test_set = sample_latents(z_loc_test, z_scale_test.mul(0.5).exp())
         N_train = len(train_set)
         N_test = len(test_set)
         train_loader = torch.utils.data.DataLoader(train_set, batch_size=batch_size, shuffle=True)
         test_loader = torch.utils.data.DataLoader(test_set, batch_size=batch_size, shuffle=True)
-        return train_loader, test_loader, N_train, N_test
+        return train_loader, test_loader, N_train, N_test, z_loc
 
 
 
@@ -68,9 +73,10 @@ def load_bodies(data_path):
     return x_train, y_train, N
 
 
-class CustomTensorDataset(torch.utils.data.Dataset):
-    def __init__(self, data_tensor, labels=None):
-        self.data_tensor = data_tensor
+class sample_latents(torch.utils.data.Dataset):
+    def __init__(self, mu_tensor, lv_tensor, labels=None):
+        self.mu_tensor = mu_tensor
+        self.lv_tensor = lv_tensor
         if labels is not None:
             self.labels = labels
         else:
@@ -78,9 +84,9 @@ class CustomTensorDataset(torch.utils.data.Dataset):
 
     def __getitem__(self, index):
         if self.labels is None:
-            return self.data_tensor[index]
+            return td.normal.Normal(loc=self.mu_tensor[index], scale=self.lv_tensor[index]).sample()
         else:
-            return self.data_tensor[index], self.labels[index]
+            return td.normal.Normal(loc=self.mu_tensor[index], scale=self.lv_tensor[index]).sample(), self.labels[index]
 
     def __len__(self):
-        return self.data_tensor.size(0)
+        return self.mu_tensor.size(0)

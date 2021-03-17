@@ -1,7 +1,9 @@
 import torch
 from tqdm import tqdm
 
-def land_auto(loc, A, z_points, grid, dv, model, constant=None, batch_size=1024, metric_grid_sum=None, grid_sampled=None,
+
+def land_auto(loc, A, z_points, grid, dv, model, constant=None, batch_size=1024, metric_grid_sum=None,
+              grid_sampled=None,
               init_curve=None, grid_init_curves=None, q_prob=None):
     """
     Checks if scale is tensor or scale and calls corresponding LAND function
@@ -22,7 +24,6 @@ def land_auto(loc, A, z_points, grid, dv, model, constant=None, batch_size=1024,
                                                              z_points=z_points,
                                                              sampled_grid_points=grid_sampled,
                                                              metric_sum=metric_grid_sum,
-                                                             q_prob=q_prob,
                                                              dv=dv,
                                                              model=model,
                                                              logspace=True,
@@ -111,27 +112,24 @@ def estimate_constant_full(mu, A, grid, dv, model, batch_size=512, sum=True):
         return approx_constant, metric_vector
 
 
-
-
 def LAND_fullcov_sampled(loc, A, z_points, dv, sampled_grid_points, metric_sum, model=None, logspace=True,
-                         init_curve=None, batch_size=256, grid_init_curves=None, q_prob=None):
+                         init_curve=None, batch_size=256, grid_init_curves=None):
     """
     full covariance matrix, expecting sampled grid data points.
     """
-
-    iters = (sampled_grid_points.shape[0] // batch_size)
+    iters = sampled_grid_points.shape[0] // batch_size if (sampled_grid_points.shape[0] % batch_size) == 0 else \
+    sampled_grid_points.shape[0] // batch_size + 1
     device = torch.device('cuda:0') if torch.cuda.is_available() else torch.device('cpu')
 
     for i in range(iters):
         # data
         grid_points_batch = sampled_grid_points[i * batch_size:(i + 1) * batch_size, :] if i < (
-                    iters - 1) else sampled_grid_points[i * batch_size:, :]
-        q_batch = q_prob[i * batch_size:(i + 1) * batch_size, :] if i < (iters - 1) else q_prob[i * batch_size:, :]
+                iters - 1) else sampled_grid_points[i * batch_size:, :]
         mu_repeated = loc.repeat([grid_points_batch.shape[0], 1])
 
         # calcs
         D2, _, _ = model.dist2_explicit(mu_repeated, grid_points_batch.to(device), A=A, C=grid_init_curves)
-        exponential_term = (-D2 / 2).squeeze(-1).exp() * q_batch.to(device)
+        exponential_term = (-D2 / 2).squeeze(-1).exp()
 
         if i == 0:
             approx_constant = exponential_term
@@ -139,8 +137,8 @@ def LAND_fullcov_sampled(loc, A, z_points, dv, sampled_grid_points, metric_sum, 
             approx_constant = torch.cat((approx_constant, exponential_term), dim=0)
     constant = approx_constant.mean() * metric_sum * dv
 
-    loc = loc.repeat([z_points.shape[0], 1])
-    D2, init_curve, success = model.dist2_explicit(loc, z_points, A=A, C=init_curve)
+    mu_repeated = loc.repeat([z_points.shape[0], 1])
+    D2, init_curve, success = model.dist2_explicit(mu_repeated, z_points, A=A, C=init_curve)
 
     inside = (-(D2) / 2).squeeze(-1)
     pz = (1 / constant) * inside.exp()
@@ -171,10 +169,10 @@ def LAND_grid_prob(grid, model, batch_size=1024, device="cuda"):
 
     print("negative grid metric:", grid_save[grid_save < 0].shape[0])
     if grid_save[grid_save < 0].shape[0] > 0:
-        grid_save[grid_save < 0] = model.metric(grid[grid_save < 0].to(device)).det()
+        grid_save[grid_save < 0] = 0
     grid_metric = grid_save.sqrt()
     grid_prob = grid_metric / grid_metric.sum()
-    return grid_prob.cpu(), grid_metric.cpu(), grid_metric.sum().cpu(), grid_save
+    return grid_prob.cpu().float(), grid_metric.cpu().float(), grid_metric.sum().cpu().float(), grid_save.float()
 
 
 def LAND_scalar_variance(loc, scale, z_points, grid_points, dv, constant=None, model=None, logspace=True,

@@ -103,13 +103,13 @@ def load_model(model_dir, x_train, experiment_parameters, device="cuda"):
     sigma = ckpt.get("sigma")
     if "bodies" in experiment_parameters["dataset"]:
         net = model.VAE_bodies(x_train, ckpt['layers'], num_components=ckpt['num_components'], device=device)
-        net.init_std(x_train, gmm_mu=torch.Tensor(ckpt['gmm_means']), gmm_cv=torch.Tensor(ckpt['gmm_cv']),
+        net.init_std(x_train, gmm_mu=ckpt['gmm_means'], gmm_cv=torch.Tensor(ckpt['gmm_cv']),
                      weights=ckpt['weights'], inv_maxstd=ckpt['inv_maxstd'], beta_constant=ckpt['beta_constant'],
                      beta_override=beta, sigma=sigma)
     elif "mnist" in experiment_parameters["dataset"]:
         net = model.VAE(x_train, layers=ckpt['layers'], num_components=ckpt['num_components'], device=device)
-        net.init_std(x_train, gmm_mu=ckpt['gmm_means'], gmm_cv=torch.Tensor(ckpt['gmm_cv']), weights=ckpt['weights'],
-                     beta=ckpt['beta_constant'])
+        net.init_std(x_train, gmm_mu=torch.Tensor(ckpt['gmm_means']), gmm_cv=torch.Tensor(ckpt['gmm_cv']),
+                     weights=ckpt['weights'], beta_constant=ckpt['beta_constant'])
     saved_dict = ckpt['state_dict']
     new_dict = net.state_dict()
     new_dict.update(saved_dict)

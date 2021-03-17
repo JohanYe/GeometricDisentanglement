@@ -34,12 +34,7 @@ print(save_dir)
 make_dir(save_dir)  # will only create new if it doesn't exist
 start_time = time.time()
 torch.manual_seed(0)
-
-# Hyperparams
 batch_size = 512 if experiment_parameters["hpc"] else 64
-layers = torch.linspace(28 ** 2, 2, 3).int()
-num_components = 50
-label_thresh = 4  # include only a subset of MNIST classes
 device = torch.device('cuda:0') if torch.cuda.is_available() else torch.device('cpu')
 
 ## Data
@@ -65,18 +60,17 @@ else:
 # load model
 net = experiment_setup.load_model(model_dir, x_train, experiment_parameters)
 
-train_loader, test_loader, N_train, N_test = data.train_test_split_latents(net,
-                                                                           experiment_parameters,
-                                                                           x_train,
-                                                                           x_test,
-                                                                           batch_size=batch_size)
+train_loader, test_loader, N_train, N_test, z = data.train_test_split_latents(net,
+                                                                              experiment_parameters,
+                                                                              x_train,
+                                                                              x_test,
+                                                                              batch_size=batch_size)
 
 if experiment_parameters["load_land"]:
     mu = torch.Tensor(np.load(join_path(model_dir, 'land_mu.npy'))).to(device).requires_grad_(True)
     A = torch.Tensor(np.load(join_path(model_dir, 'land_std.npy'))).to(device).requires_grad_(True)
-else:  # manual init
+else:
     mu = stats.sturm_mean(net, z.to(device), num_steps=5).unsqueeze(0)
-    A = torch.Tensor(np.random.uniform(-1, 1, size=(2, 2)) / 100).to(device).float().requires_grad_(True)
 
 # meshgrid creating
 meshsize = 100 if experiment_parameters["sampled"] else 20
@@ -89,13 +83,6 @@ if experiment_parameters["sampled"]:
                                                                                  model=net,
                                                                                  batch_size=1,
                                                                                  device=device)
-        # really hacky solution
-        n_faulty_grid_spots = grid_save[grid_save < 0].shape[0]
-        if 0 < n_faulty_grid_spots < 5:
-            grid_save[grid_save < 0] = 0
-            grid_metric = grid_save.sqrt()
-            grid_prob = grid_metric / grid_metric.sum()
-            grid_metric_sum = grid_metric.sum()
 else:
     grid_metric_sum = None
 
@@ -121,7 +108,7 @@ if not experiment_parameters["load_land"]:
                     # data
                     lpz, init_curve, dist2, constant = land.land_auto(loc=mu,
                                                                       A=A,
-                                                                      z_points=batch[0].to(device),
+                                                                      z_points=batch.to(device),
                                                                       dv=dv,
                                                                       grid=Mxy,
                                                                       model=net,
@@ -129,9 +116,12 @@ if not experiment_parameters["load_land"]:
                                                                       batch_size=batch_size,
                                                                       metric_grid_sum=grid_metric_sum,
                                                                       grid_sampled=Mxy_batch)
+                    # TODO: ADD INF BREAKER
+                    # if torch.isinf(lpz.cpu().mean()):
+                    #     break
                     lpzs.append(lpz.cpu().mean())
 
-                    if idx == 5:
+                    if idx == (len(train_loader) //2):
                         break
             mus.append(mu.clone().detach().cpu())
             stds.append(A.clone().detach().cpu())
@@ -176,7 +166,7 @@ for j in range(40):
             # data
             lpz, init_curve, dist2, constant = land.land_auto(loc=mu,
                                                               A=A,
-                                                              z_points=batch[0].to(device),
+                                                              z_points=batch.to(device),
                                                               dv=dv,
                                                               grid=Mxy,
                                                               model=net,
@@ -217,7 +207,7 @@ for j in range(40):
                 # data
                 lpz, init_curve, dist2, constant = land.land_auto(loc=mu,
                                                                   A=A,
-                                                                  z_points=batch[0].to(device),
+                                                                  z_points=batch.to(device),
                                                                   dv=dv,
                                                                   grid=Mxy,
                                                                   model=net,
