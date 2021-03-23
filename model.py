@@ -145,7 +145,7 @@ class BasicVAE(nn.Module, EmbeddedManifold):
 
                 log_wk = log_px_z - kld
                 if log_wk.sum() > 0:
-                    log_wk = -1*log_wk
+                    log_wk = -1 * log_wk
                 L_k = log_wk.logsumexp(dim=-1) - k.log()
 
                 loss = L_k.sum()
@@ -326,13 +326,16 @@ class VAE(nn.Module, EmbeddedManifold):
 
     # This function sets up the data structures for the RBF network for modeling variance.
     # XXX: We should do this more elagantly directly in __init__
-    def init_std(self, x, gmm_mu=None, gmm_cv=None, weights=None, beta_constant=0.5, beta_override=None):
+    def init_std(self, x, gmm_mu=None, gmm_cv=None, weights=None, beta_constant=0.5, beta_override=None,
+                 inv_maxstd=7.5e-2, n_samples=2, num_components=None):
         self.beta_constant = beta_constant
-        with torch.no_grad():
-            z = self.encode(x.to(self.device)).sample()
+        if num_components is not None:
+            self.num_components = num_components
         N, D = x.shape
+        with torch.no_grad():
+            z = self.encode(x.to(self.device)).sample([n_samples]).reshape(n_samples*N, 2)
         d = z.shape[1]
-        inv_maxstd = 1e-1  # 1.0 / x.std(dim=0).mean() # x.std(dim=0).mean() #D*x.var(dim=0).mean()
+        inv_maxstd = inv_maxstd  # 1.0 / x.std(dim=0).mean() # x.std(dim=0).mean() #D*x.var(dim=0).mean()
 
         if gmm_mu is None and gmm_cv is None and weights is None:
             from sklearn import mixture
@@ -413,7 +416,7 @@ class VAE(nn.Module, EmbeddedManifold):
 
                 log_wk = log_px_z - kld
                 if log_wk.sum() > 0:
-                    log_wk = -1*log_wk
+                    log_wk = -1 * log_wk
                 L_k = log_wk.logsumexp(dim=-1) - k.log()
 
                 loss = -L_k.sum()
@@ -499,7 +502,7 @@ class VAE(nn.Module, EmbeddedManifold):
 
 
 class VAE_bodies(nn.Module, EmbeddedManifold):
-    def __init__(self, x, layers, num_components=100, device=None,old=False):
+    def __init__(self, x, layers, num_components=100, device=None, old=False):
         super(VAE_bodies, self).__init__()
 
         self.device = device
@@ -628,7 +631,7 @@ class VAE_bodies(nn.Module, EmbeddedManifold):
             self.gmm_covariances = gmm_cv
             self.clf_weights = weights
         if beta_override is None:
-            beta = beta_constant / torch.tensor(self.gmm_covariances, dtype=torch.float, requires_grad=False)
+            beta = beta_constant.cpu() / torch.tensor(self.gmm_covariances, dtype=torch.float, requires_grad=False)
         else:
             beta = beta_override
         self.beta = beta.to(self.device)

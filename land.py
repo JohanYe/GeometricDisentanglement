@@ -95,7 +95,12 @@ def estimate_constant_full(mu, A, grid, dv, model, batch_size=512, sum=True):
             # calcs
             D2, _, _ = model.dist2_explicit(mu_repeated, grid_points_batch.to(device), A=A)
             exponential_term = (-D2 / 2).squeeze(-1).exp()
-            metric_term = model.metric(grid_points_batch.to(device)).det().sqrt()
+            metric_determinant = model.metric(grid_points_batch.to(device)).det()
+            if metric_determinant < 0:
+                model = model.double()
+                metric_determinant = model.metric(grid_points_batch.double().to(device)).double().det()
+                model = model.float()
+            metric_term = metric_determinant.sqrt()
             constant = metric_term * exponential_term * dv
 
             if i == 0:
@@ -172,7 +177,7 @@ def LAND_grid_prob(grid, model, batch_size=1024, device="cuda"):
         grid_save[grid_save < 0] = 0
     grid_metric = grid_save.sqrt()
     grid_prob = grid_metric / grid_metric.sum()
-    return grid_prob.cpu().float(), grid_metric.cpu().float(), grid_metric.sum().cpu().float(), grid_save.float()
+    return grid_prob.cpu(), grid_metric.cpu(), grid_metric.sum().cpu(), grid_save
 
 
 def LAND_scalar_variance(loc, scale, z_points, grid_points, dv, constant=None, model=None, logspace=True,

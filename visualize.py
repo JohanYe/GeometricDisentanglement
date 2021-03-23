@@ -2,6 +2,11 @@ import matplotlib.pyplot as plt
 import numpy as np
 import torch
 
+def forceAspect(ax,aspect=1):
+    im = ax.get_images()
+    extent =  im[0].get_extent()
+    ax.set_aspect(abs((extent[1]-extent[0])/(extent[3]-extent[2]))/aspect)
+
 
 def plot_training_curves(nll_log, constant_log, distance_log, output_filename, silent=True):
     """ Plot training curve and dist + constant progression """

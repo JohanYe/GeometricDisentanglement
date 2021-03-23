@@ -5,6 +5,41 @@ import torchvision
 from PIL import Image
 from torchvision import transforms as transforms
 import torch.distributions as td
+from os.path import join as join_path
+import re
+
+def load_data(experiment_parameters, root="./data"):
+    if "outlier" in experiment_parameters["dataset"] or "augment" in experiment_parameters["dataset"]:
+        data_path = join_path("./data", experiment_parameters["dataset"])
+        x_train, y_train, N_train = load_mnist_augment(data_path)
+        x_test = None
+        print("data samples loaded", N_train)
+    elif "bodies" in experiment_parameters["dataset"]:
+        data_path = join_path("./data", "bodies/")
+        x_train, y_train, N_train = load_bodies(data_path)
+        x_test, y_test, N_test = None, None, None
+    elif experiment_parameters["dataset"] == "mnist":
+        x_train, y_train, N_train = load_mnist_train(root="./data", label_threshold=4, one_digit=False)
+        x_test, y_test, N_test = load_mnist_train(root="./data", label_threshold=4, one_digit=False, train=False)
+    elif experiment_parameters["dataset"] == "dsprites":
+        path = join_path(root, "dsprites/data_split.pt")
+        data = torch.load(path)
+        x_train = data["train_set"].reshape(data["train_set"].shape[0],-1)
+        x_test = data["test_set"].reshape(data["test_set"].shape[0], -1)
+        N_train = x_train.shape[0]
+        N_test = x_test.shape[0]
+        y_test, y_train = torch.zeros(N_train), torch.zeros(N_test)
+    else:
+        exp_regex = re.findall(r"([a-zA-Z]+)(\d+)", experiment_parameters["dataset"])
+        num_max = 0
+        for i, c in enumerate(exp_regex[0][1]):
+            if num_max < int(c):
+                num_max = int(c)
+            one_digit = False if i > 0 else True
+        x_train, y_train, N_train = load_mnist_train(root="./data", label_threshold=num_max, one_digit=one_digit)
+        x_test, y_test, N_test = load_mnist_train(root="./data", label_threshold=4, one_digit=False, train=False)
+    return x_train, y_train, N_train, x_test, y_test, N_test
+
 
 def load_mnist_train(root, label_threshold, one_digit=False, download=False, train=True):
     mnist_train = torchvision.datasets.MNIST(root, train=train, download=download)
@@ -26,7 +61,7 @@ def train_test_split_latents(net, experiment_parameters, x_train, x_test=None, b
         z_loc = z_loc.cpu()
         z_scale = z_scale.cpu()
     z_data = sample_latents(z_loc, z_scale.mul(0.5).exp())
-    if experiment_parameters["dataset"] != "mnist":
+    if x_test is None:
         N_train = int(0.9 * len(z_data))
         N_test = len(z_data) - int(0.9 * len(z_data))
         train_set, test_set = torch.utils.data.random_split(z_data, [N_train, N_test])
@@ -90,3 +125,21 @@ class sample_latents(torch.utils.data.Dataset):
 
     def __len__(self):
         return self.mu_tensor.size(0)
+
+class custom_dataset(torch.utils.data.Dataset):
+    def __init__(self, data_tensor, labels=None):
+        self.data_tensor = data_tensor
+        if labels is not None:
+            self.labels = labels
+        else:
+            self.labels = None
+
+    def __getitem__(self, index):
+        if self.labels is None:
+            return self.data_tensor[index]
+        else:
+            return self.data_tensor[index], self.labels[index]
+
+    def __len__(self):
+        return self.data_tensor.size(0)
+

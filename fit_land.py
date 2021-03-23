@@ -10,7 +10,6 @@ import experiment_setup
 import utils
 from geoml import stats
 from os.path import join as join_path
-import re
 import data
 
 sns.set_style("darkgrid")
@@ -38,24 +37,7 @@ batch_size = 512 if experiment_parameters["hpc"] else 64
 device = torch.device('cuda:0') if torch.cuda.is_available() else torch.device('cpu')
 
 ## Data
-if "outlier" in experiment_parameters["dataset"] or "augment" in experiment_parameters["dataset"]:
-    data_path = join_path("./data", experiment_parameters["dataset"])
-    x_train, y_train, N = data.load_mnist_augment(data_path)
-    x_test = None
-    print("data samples loaded", N)
-elif "bodies" in experiment_parameters["dataset"]:
-    data_path = join_path("./data", "bodies/")
-    x_train, y_train, N = data.load_bodies(data_path)
-    x_test = None
-elif "mnist" == experiment_parameters["dataset"]:
-    x_train, y_train, N = data.load_mnist_train(root="./data", label_threshold=4, one_digit=False)
-    x_test, y_test, N_test = data.load_mnist_train(root="./data", label_threshold=4, one_digit=False, train=False)
-    x_test = None
-else:
-    exp_regex = (re.findall(r"([a-zA-Z ]*)(\d*)", experiment_parameters["dataset"]))
-    one_digit = True if len(exp_regex[1]) == 1 else False
-    x_train, y_train, N = data.load_mnist_train(root="./data", label_threshold=exp_regex[1], one_digit=one_digit)
-    x_test = None
+x_train, x_test, N, x_test, y_test, N_test = data.load_data(experiment_parameters, root="./data")
 
 # load model
 net = experiment_setup.load_model(model_dir, x_train, experiment_parameters)
@@ -94,7 +76,7 @@ if not experiment_parameters["load_land"]:
             mu = stats.sturm_mean(net, z.to(device), num_steps=20).unsqueeze(0)
             # mu_np = np.expand_dims(np.random.uniform(-2, 2, size=(2)), axis=0)
             # mu = torch.tensor(mu_np).to(device).float().requires_grad_(True)
-        A = torch.Tensor(np.random.uniform(-1, 1, size=(2, 2)) / 100).to(device).float().requires_grad_(True)
+        A = torch.Tensor(np.random.uniform(-5, 5, size=(2, 2)) / 100).to(device).float().requires_grad_(True)
         lpzs = []
         try:
             with torch.no_grad():
@@ -137,7 +119,7 @@ print(average_loglik)
 print(mus)
 print(stds)
 
-optimizer_mu = torch.optim.Adam([mu], lr=2e-3)  # , weight_decay=1e-4)
+optimizer_mu = torch.optim.Adam([mu], lr=5e-3)  # , weight_decay=1e-4)
 lpzs_log, mu_log, constant_log, distance_log = {}, {}, {}, {}
 optimizer_std = torch.optim.Adam([A], lr=1e-3)  # , weight_decay=1e-4)
 std_log, lpz_std_log = {}, {}
@@ -227,8 +209,8 @@ for j in range(40):
                                                torch.cat(mus).mean(dim=0)[1].item(),
                                                np.round(A.data.tolist(), 4)))
         if epoch > 1:
-            if (test_lpz_log[epoch - 1] - 0.05 * lpz_std_log[epoch]) < test_lpz_log[epoch] < (
-                    test_lpz_log[epoch - 1] + 0.05 * lpz_std_log[epoch]):
+            if (test_lpz_log[epoch - 1] - 0.1 * lpz_std_log[epoch]) < test_lpz_log[epoch] < (
+                    test_lpz_log[epoch - 1] + 0.1 * lpz_std_log[epoch]):
                 early_stopping_counter += 1
             else:
                 early_stopping_counter = 0
