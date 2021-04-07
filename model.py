@@ -591,7 +591,7 @@ class VAE_bodies(nn.Module, EmbeddedManifold):
                     lam = min(max_kl, max(0.0, 2 * max_kl * (epoch - switch_epoch) / (num_epochs - switch_epoch)))
                 else:
                     lam = 1
-                for batch_idx, (data,) in enumerate(data_loader):
+                for batch_idx, data in enumerate(data_loader):
                     data = data.to(self.device)
                     optimizer.zero_grad()
                     loss = -self.elbo(data, lam)
@@ -601,8 +601,31 @@ class VAE_bodies(nn.Module, EmbeddedManifold):
                 avg_loss = sum_loss / len(data_loader.dataset)
                 print('(MEAN; lambda={:.4f}) ====> Epoch: {} Average loss: {:.4f}'.format(lam, epoch, avg_loss))
 
+    def load_std(self, x, gmm_mu=None, gmm_cv=None, weights=None, inv_maxstd=1e-1, beta_constant=0.5,
+                 beta_values=None, z_override=None, sigma=None):
+        """ messy, needs clean separation between init and load """
+        N, D = x.shape
+
+        print('loading weights...')
+        self.gmm_means = gmm_mu
+        self.gmm_covariances = gmm_cv
+        self.clf_weights = weights
+        d = self.gmm_means.shape[1]
+
+        if beta_values is None:
+            beta = beta_constant.cpu() / torch.tensor(self.gmm_covariances, dtype=torch.float, requires_grad=False)
+        else:
+            beta = beta_values
+        self.beta = beta.to(self.device)
+        self.dec_std = nnj.Sequential(nnj.RBF(d, self.num_components,
+                                              points=torch.tensor(self.gmm_means, dtype=torch.float,
+                                                                  requires_grad=False),
+                                              beta=self.beta),  # d --> num_components
+                                      nnj.PosLinear(self.num_components, 1, bias=False),  # num_components --> 1
+                                      nnj.Reciprocal(inv_maxstd),  # 1 --> 1
+                                      nnj.PosLinear(1, D)).to(self.device)  # 1 --> D
+
     # This function sets up the data structures for the RBF network for modeling variance.
-    # XXX: We should do this more elagantly directly in __init__
     def init_std(self, x, gmm_mu=None, gmm_cv=None, weights=None, inv_maxstd=1e-1, beta_constant=0.5,
                  component_overwrite=None, beta_override=None, n_samples=2, z_override=None, sigma=None):
         if component_overwrite is not None:
@@ -655,7 +678,7 @@ class VAE_bodies(nn.Module, EmbeddedManifold):
         optimizer = torch.optim.Adam(self.dec_std.parameters(), weight_decay=1e-4)
         for epoch in range(num_epochs):
             sum_loss = 0
-            for batch_idx, (data,) in enumerate(data_loader):
+            for batch_idx, data in enumerate(data_loader):
                 data = data.to(self.device)
                 optimizer.zero_grad()
                 # XXX: we should sample here

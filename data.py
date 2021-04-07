@@ -28,7 +28,7 @@ def load_data(experiment_parameters, root="./data"):
         x_test = data["test_set"].reshape(data["test_set"].shape[0], -1)
         N_train = x_train.shape[0]
         N_test = x_test.shape[0]
-        y_test, y_train = torch.zeros(N_train), torch.zeros(N_test)
+        y_train, y_test = torch.zeros(N_train), torch.zeros(N_test)
     else:
         exp_regex = re.findall(r"([a-zA-Z]+)(\d+)", experiment_parameters["dataset"])
         num_max = 0
@@ -81,7 +81,18 @@ def train_test_split_latents(net, experiment_parameters, x_train, x_test=None, b
         test_loader = torch.utils.data.DataLoader(test_set, batch_size=batch_size, shuffle=True)
         return train_loader, test_loader, N_train, N_test, z_loc
 
-
+def data_split(x_train, x_test, batch_size):
+    """ y is neglected due to y being solely for visualization """
+    if x_test is None:
+        N_train = int(0.9 * len(x_train))
+        N_test = len(x_train) - int(0.9 * len(x_train))
+        train_set, test_set = torch.utils.data.random_split(x_train, [N_train, N_test])
+    else:
+        train_set = torch.utils.data.TensorDataset(x_train)
+        test_set = torch.utils.data.TensorDataset(x_test)
+    train_loader = torch.utils.data.DataLoader(train_set, batch_size=batch_size, shuffle=True)
+    test_loader = torch.utils.data.DataLoader(test_set, batch_size=batch_size, shuffle=True)
+    return train_loader, test_loader
 
 def load_mnist_augment(data_path):
     load = np.load(data_path, allow_pickle=True)

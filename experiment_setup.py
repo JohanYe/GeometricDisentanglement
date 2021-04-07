@@ -6,7 +6,71 @@ import os
 from os.path import join as join_path
 import utils
 
-def parse_args(default_params: dict) -> dict:
+
+def parse_args_vae(default_params: dict) -> dict:
+    """
+    Parse arguments from command line.
+
+    Args:
+        default_params (dict): the dictionary containing the default parameter values. It aso implicitely defines
+                                which parameters can be parsed.
+    Returns:
+        parsed_params (dict): the dictionary containing the parameters for the experiments after having been parsed.
+    """
+    parser = argparse.ArgumentParser(formatter_class=argparse.ArgumentDefaultsHelpFormatter)
+
+    parser.add_argument('--model_dir',
+                        type=str,
+                        metavar='MODEL_DIR',
+                        dest="model_dir",
+                        default=default_params["model_dir"],
+                        help="path to model to fit land to")
+    parser.add_argument('--dataset',
+                        type=str,
+                        metavar='DATASET',
+                        dest="dataset",
+                        default=default_params["dataset"],
+                        help="identifier of the dataset to be used, available dataset: bodies, MNIST.")
+    parser.add_argument('--hidden_layer',
+                        type=int,
+                        metavar='HIDDEN_LAYER',
+                        dest="hidden_layer",
+                        default=default_params["hidden_layer"],
+                        help="VAE hidden layer size")
+    parser.add_argument('--std_epochs',
+                        type=int,
+                        metavar='STD_EPOCHS',
+                        dest="std_epochs",
+                        default=default_params["std_epochs"],
+                        help="Number of epochs for std network training")
+    parser.add_argument('--beta_constant',
+                        type=float,
+                        metavar='BETA_CONSTANT',
+                        dest="beta_constant",
+                        default=default_params["beta_constant"],
+                        help="Beta constant value")
+    parser.add_argument('--inv_maxstd',
+                        type=float,
+                        metavar='INV_MAXSTD',
+                        dest="inv_maxstd",
+                        default=default_params["inv_maxstd"],
+                        help="Constant to limit reciprocal value")
+    args = parser.parse_args()
+    print(args)
+    parsed_params = default_params.copy()
+    for name, value in vars(args).items():
+        parsed_value = value
+        if name in list(default_params.keys()):
+            parsed_params[name] = parsed_value
+        else:
+            raise Exception(
+                "Parameter {} with value {} was not recognized, available parameters: {}".format(name, value,
+                                                                                                 list(
+                                                                                                     default_params.keys())))
+    return parsed_params
+
+
+def parse_args_land(default_params: dict) -> dict:
     """
     Parse arguments from command line.
 
@@ -101,6 +165,9 @@ def load_model(model_dir, x_train, experiment_parameters, device="cuda"):
     ckpt = torch.load(checkpoint, map_location=device)
     beta = ckpt.get("beta_override")
     sigma = ckpt.get("sigma")
+    if torch.is_tensor(ckpt['gmm_cv']):  # bug catching
+        if ckpt['gmm_cv'].is_cuda:
+            ckpt['gmm_cv'] = ckpt['gmm_cv'].cpu()
     if "bodies" in experiment_parameters["dataset"]:
         net = model.VAE_bodies(x_train, ckpt['layers'], num_components=ckpt['num_components'], device=device)
         net.init_std(x_train, gmm_mu=ckpt['gmm_means'], gmm_cv=torch.Tensor(ckpt['gmm_cv']),

@@ -25,7 +25,7 @@ experiment_parameters = {
 }
 
 # Experiment setup
-experiment_parameters = experiment_setup.parse_args(experiment_parameters)
+experiment_parameters = experiment_setup.parse_args_land(experiment_parameters)
 print(experiment_parameters)
 model_dir = join_path("./model", experiment_parameters["model_dir"])
 save_dir = join_path(model_dir, experiment_parameters["exp_name"])
@@ -37,7 +37,7 @@ batch_size = 512 if experiment_parameters["hpc"] else 64
 device = torch.device('cuda:0') if torch.cuda.is_available() else torch.device('cpu')
 
 ## Data
-x_train, x_test, N, x_test, y_test, N_test = data.load_data(experiment_parameters, root="./data")
+x_train, y_train, N, x_test, y_test, N_test = data.load_data(experiment_parameters, root="./data")
 
 # load model
 net = experiment_setup.load_model(model_dir, x_train, experiment_parameters)
@@ -131,7 +131,7 @@ best_nll = np.inf
 
 net.eval()
 net = net
-for j in range(40):
+for j in range(60):
     for epoch in range(total_epochs + 1, total_epochs + n_epochs + 1):
         total_epochs += 1
         Cs, mus, stds, lpzs, constants, distances = [], [], [], [], [], []
