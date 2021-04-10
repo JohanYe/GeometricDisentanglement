@@ -11,7 +11,7 @@ python train_vae.py --model_dir  vae --dataset bodies
 
 Training LAND to latent representations:
 ```
-python train_vae.py --model_dir  vae --exp_name experiment_1 --dataset bodies --hpc
+python fit_land.py --model_dir  vae --exp_name experiment_1 --dataset bodies --hpc
 ```
 
 Cleaner code and repo to come
